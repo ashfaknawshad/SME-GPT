@@ -6,6 +6,7 @@ import * as jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { generateDeviceToken, getDeviceName } from "@/lib/device";
 import { sendLoginVerificationEmail } from "@/lib/mail";
+import { resolveAppUrl } from "@/lib/appUrl";
 
 export async function POST(req: Request) {
   try {
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
           },
         });
 
-        const appUrl = process.env.APP_URL || "http://localhost:3000";
+        const appUrl = resolveAppUrl(req);
         const confirmLink = `${appUrl}/api/auth/confirm-login?token=${verificationToken}`;
         const trustLink = `${appUrl}/api/auth/trust-device?token=${verificationToken}`;
 

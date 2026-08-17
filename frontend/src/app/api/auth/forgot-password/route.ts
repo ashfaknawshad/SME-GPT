@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sendResetPasswordEmail } from "@/lib/mail";
+import { resolveAppUrl } from "@/lib/appUrl";
 import crypto from "crypto";
 import { NextResponse } from "next/server";
 
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
       },
     });
 
-    const resetLink = `${process.env.APP_URL}/reset-password?token=${token}`;
+    const resetLink = `${resolveAppUrl(req)}/reset-password?token=${token}`;
 
     await sendResetPasswordEmail(email, resetLink);
 
