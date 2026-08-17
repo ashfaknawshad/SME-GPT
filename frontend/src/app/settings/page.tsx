@@ -11,13 +11,7 @@ import { getSession, logoutUser, SessionUser, getStoredToken } from "@/lib/auth"
 import { AppLanguage, getStoredLanguage, ui, setStoredLanguage } from "@/lib/i18n";
 import { useTheme } from "@/lib/theme";
 import { noticeDialog } from "@/lib/confirm";
-import {
-  resolveBackendUrl,
-  getBackendUrlOverride,
-  setBackendUrlOverride,
-  clearBackendUrlOverride,
-  getDefaultBackendUrl,
-} from "@/lib/backendUrl";
+import { resolveBackendUrl } from "@/lib/backendUrl";
 
 const BACKEND_URL = resolveBackendUrl();
 
@@ -128,11 +122,6 @@ export default function SettingsPage() {
   const [lang, setLang]     = useState<AppLanguage>("en");
   const [session, setSession] = useState<SessionUser | null>(null);
   const [tab, setTab]         = useState<Tab>("account");
-  // Backend URL override (see lib/backendUrl.ts). Read after mount — localStorage
-  // isn't available during SSR.
-  const [backendUrlInput, setBackendUrlInput] = useState("");
-  const [backendUrlError, setBackendUrlError] = useState("");
-
   // Profile state
   const [form, setForm]           = useState<ProfileData>({ fullName:"", profileImage:"", companyName:"", businessUnit:"", primaryLanguage:"en", autoClassify:true, twoFactorEnabled:false, phone:"", jobTitle:"", country:"" });
   const [isEditing, setIsEditing] = useState(false);
@@ -161,7 +150,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setLang(getStoredLanguage());
-    setBackendUrlInput(getBackendUrlOverride());
     const load = async () => {
       const s = await getSession();
       if (!s) { router.push("/login"); return; }
@@ -314,24 +302,6 @@ export default function SettingsPage() {
     const token = getToken();
     await fetch(`${BACKEND_URL}/user/budget-settings`, { method:"PUT", headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`}, body:JSON.stringify({ budgets: budgetOn ? budgets : {} }) });
     setBudgetSaved(true); setTimeout(() => setBudgetSaved(false), 2500);
-  };
-
-  // BACKEND_URL is captured at module load, so every page that already imported
-  // it keeps the old value until a reload — hence the full reload after saving.
-  const handleSaveBackendUrl = () => {
-    const value = backendUrlInput.trim();
-    if (value && !/^https?:\/\/.+/i.test(value)) {
-      setBackendUrlError(t.backendUrlInvalid);
-      return;
-    }
-    setBackendUrlOverride(value);
-    window.location.reload();
-  };
-
-  const handleResetBackendUrl = () => {
-    clearBackendUrlOverride();
-    setBackendUrlInput("");
-    window.location.reload();
   };
 
   const downloadAuditPack = async () => {
@@ -599,45 +569,6 @@ export default function SettingsPage() {
                   </div>
                 </Card>
 
-                <SectionLabel icon="cable" title={t.backendSection} />
-                <Card>
-                  <div className="px-5 py-4">
-                    <p className="text-[14px] font-semibold text-[var(--text-1)]">{t.backendUrlLabel}</p>
-                    <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{t.backendUrlDesc}</p>
-                    <input
-                      value={backendUrlInput}
-                      onChange={(e) => { setBackendUrlInput(e.target.value); setBackendUrlError(""); }}
-                      placeholder={t.backendUrlPlaceholder}
-                      className="field-input mt-3 h-10 w-full rounded-xl border px-3 text-[13px]"
-                      spellCheck={false}
-                      autoCapitalize="none"
-                    />
-                    {backendUrlError && (
-                      <p className="mt-2 text-[12px] font-medium" style={{ color: "var(--danger)" }}>
-                        {backendUrlError}
-                      </p>
-                    )}
-                    <p className="mt-2 text-[11px] text-[var(--text-3)]">
-                      {t.backendUrlDefaultHint}: <span className="font-mono">{getDefaultBackendUrl()}</span>
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        onClick={handleSaveBackendUrl}
-                        className="rounded-xl px-4 py-2 text-[13px] font-bold text-white transition hover:opacity-90"
-                        style={{ background: "var(--brand)" }}
-                      >
-                        {t.backendUrlSave}
-                      </button>
-                      <button
-                        onClick={handleResetBackendUrl}
-                        className="rounded-xl px-4 py-2 text-[13px] font-semibold transition hover:opacity-80"
-                        style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}
-                      >
-                        {t.backendUrlReset}
-                      </button>
-                    </div>
-                  </div>
-                </Card>
               </>
             )}
 
