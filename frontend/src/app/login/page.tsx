@@ -30,6 +30,21 @@ const features = [
   },
 ];
 
+// Where to land after signing in. proxy.ts appends ?next=<path> when it bounces
+// an unauthenticated request, so the user resumes where they were headed
+// instead of always landing on the dashboard. Read straight from
+// window.location rather than useSearchParams(), which would require wrapping
+// this page in a Suspense boundary.
+function nextDestination(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const next = new URLSearchParams(window.location.search).get("next");
+  // Relative same-site paths only — an absolute URL here would turn the login
+  // page into an open redirect. "//host" is absolute despite the leading
+  // slash, hence the second check.
+  if (next && next.startsWith("/") && !next.startsWith("//")) return next;
+  return "/dashboard";
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [lang, setLang] = useState<AppLanguage>("en");
@@ -52,7 +67,7 @@ export default function LoginPage() {
     getSession()
       .then((s) => {
         if (!active) return;
-        if (s) router.replace("/dashboard");
+        if (s) router.replace(nextDestination());
         else setCheckingSession(false);
       })
       .catch(() => { if (active) setCheckingSession(false); });
@@ -104,7 +119,7 @@ export default function LoginPage() {
     if (result.data?.success) {
       if (result.data.token) {
         localStorage.setItem("token", result.data.token);
-        router.push("/dashboard");
+        router.replace(nextDestination());
       } else {
         setError("Login token not received. Please try again.");
       }

@@ -84,6 +84,15 @@ export async function logoutUser() {
   await fetch("/api/auth/logout", {
     method: "POST",
   });
+
+  // Leave via a real document navigation rather than router.push(), for two
+  // reasons: replace() drops the page we're leaving from the history stack so
+  // Back can't return to it, and a full load discards the client router cache
+  // holding the rendered dashboard (and the React state with the previous
+  // user's figures in it). Callers should not navigate after awaiting this.
+  if (typeof window !== "undefined") {
+    window.location.replace("/login");
+  }
 }
 
 export function clearAllDummyAuth() {

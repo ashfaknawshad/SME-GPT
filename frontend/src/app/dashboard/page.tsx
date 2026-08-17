@@ -284,7 +284,7 @@ export default function DashboardPage() {
               </button>
 
               <button
-                onClick={async () => { await logoutUser(); router.push("/login"); }}
+                onClick={() => { void logoutUser(); }}
                 className="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition hover:bg-[var(--surface-2)]"
                 style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}
               >

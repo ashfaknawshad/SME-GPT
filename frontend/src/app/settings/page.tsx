@@ -451,7 +451,7 @@ export default function SettingsPage() {
                   </p>
                 )}
 
-                <button onClick={async () => { await logoutUser(); router.push("/login"); }}
+                <button onClick={() => { void logoutUser(); }}
                   className="mt-6 w-full rounded-2xl py-4 text-[15px] font-bold transition hover:opacity-90"
                   style={{ border:"1px solid rgba(220,38,38,0.25)", background:"rgba(220,38,38,0.05)", color:"#dc2626" }}>
                   {t.signOut}
