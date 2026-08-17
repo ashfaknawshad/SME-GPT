@@ -239,8 +239,16 @@ export default function DashboardPage() {
       <div className="min-h-screen pb-24" style={{ background: "var(--bg)" }}>
         {/* Header */}
         <header style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
-          <div className="mx-auto flex w-full max-w-[960px] flex-col gap-3 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
+          {/* One row from 640px up. Below that the controls wrap to their own
+              row — five of them plus the wordmark won't fit across a phone —
+              but stay right-aligned so they read as a deliberate group rather
+              than bunching against the left edge. This used to stack all the
+              way up to lg (1024px), which left half the header empty on any
+              tablet or narrowed desktop window. */}
+          <div className="mx-auto flex w-full max-w-[960px] flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            {/* min-w-0 lets this side shrink so a long company name truncates
+                instead of shoving the controls off the right edge. */}
+            <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
               {/* Decorative: the "SME-GPT" heading beside it already names the
                   app, so an alt text here would just be read out twice. */}
               <Image
@@ -251,21 +259,22 @@ export default function DashboardPage() {
                 priority
                 className="h-10 w-10 shrink-0 rounded-xl object-contain shadow-sm"
               />
-              <div>
-                <h1 className="text-[19px] font-extrabold tracking-tight text-[var(--text-1)]">
+              <div className="min-w-0">
+                <h1 className="text-[17px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[19px]">
                   SME-GPT
                 </h1>
-                <p className="text-[12px] text-[var(--text-2)]">{session.companyName}</p>
+                <p className="truncate text-[12px] text-[var(--text-2)]">{session.companyName}</p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5 self-end sm:gap-2 sm:self-auto">
               <ThemeToggle />
               <LanguageSwitcher />
 
               <button
                 onClick={() => router.push("/notifications")}
-                className="relative flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-[var(--surface-2)]"
+                aria-label="Notifications"
+                className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition hover:bg-[var(--surface-2)]"
               >
                 <span className="material-symbols-outlined text-[20px] text-[var(--text-2)]">
                   notifications
@@ -277,18 +286,23 @@ export default function DashboardPage() {
 
               <button
                 onClick={() => router.push("/profile")}
-                className="flex h-9 w-9 items-center justify-center rounded-full text-white transition hover:opacity-90"
+                aria-label="Profile"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition hover:opacity-90"
                 style={{ background: "#c97b5a" }}
               >
                 <span className="material-symbols-outlined text-[20px]">person</span>
               </button>
 
+              {/* Icon-only on phones, where these five share a cramped row of
+                  their own; the label returns from sm up. */}
               <button
                 onClick={() => { void logoutUser(); }}
-                className="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition hover:bg-[var(--surface-2)]"
+                aria-label="Logout"
+                className="flex h-9 w-9 items-center justify-center rounded-xl transition hover:bg-[var(--surface-2)] sm:w-auto sm:px-3"
                 style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}
               >
-                Logout
+                <span className="material-symbols-outlined text-[18px] sm:hidden">logout</span>
+                <span className="hidden text-[12px] font-semibold sm:inline">Logout</span>
               </button>
             </div>
           </div>
