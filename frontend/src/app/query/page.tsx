@@ -488,7 +488,12 @@ export default function AiAssistantChatPage() {
 
   return (
     <MobileShell hideQuickActions>
-      <div className="flex h-screen" style={{ background: "var(--bg)" }}>
+      {/* h-[100dvh] (not h-screen/100vh) + overflow-hidden: with
+          interactive-widget=resizes-content the dvh shrinks when the keyboard
+          opens, so the fixed header stays pinned and only the messages pane
+          scrolls — the header no longer scrolls off when you dismiss the
+          keyboard. */}
+      <div className="flex h-[100dvh] overflow-hidden" style={{ background: "var(--bg)" }}>
         {/* Desktop sidebar */}
         <aside className="hidden w-[272px] shrink-0 border-r lg:block" style={{ borderColor: "var(--border)" }}>
           {Sidebar}

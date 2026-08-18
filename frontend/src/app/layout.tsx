@@ -21,6 +21,16 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#2563ff",
+  // Keep the page pinned to the device width (no user pinch-zoom-out that the
+  // PWA was falling into when a row was slightly too wide). initialScale/width
+  // are Next defaults but set explicitly here so the intent is clear.
+  width: "device-width",
+  initialScale: 1,
+  // interactive-widget=resizes-content: when the on-screen keyboard opens,
+  // shrink the layout viewport (and 100dvh) instead of overlaying it. This is
+  // what keeps a chat's fixed input bar above the keyboard and stops the
+  // header from being pushed off-screen on mobile.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({

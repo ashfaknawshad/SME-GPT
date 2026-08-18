@@ -80,6 +80,14 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
+  /* No horizontal scroll anywhere: a single row that's a few px too wide used
+     to make the whole PWA wider than the screen, which mobile browsers "fixed"
+     by zooming out. `clip` contains that without creating a scroll container
+     (so it won't break position: sticky the way overflow-x: hidden can). Any
+     genuinely wide element (tables, code) must still opt into its own
+     overflow-x: auto scroller. */
+  overflow-x: clip;
+  max-width: 100%;
 }
 
 body {

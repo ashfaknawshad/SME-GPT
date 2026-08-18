@@ -378,15 +378,17 @@ export default function AnalysisDetailPage() {
     <MobileShell>
       <div className="min-h-screen pb-24" style={{ background: "var(--bg)" }}>
         <main className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <button
               onClick={() => router.back()}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--brand-mid)] transition hover:bg-[var(--brand-tint)]"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--brand-mid)] transition hover:bg-[var(--brand-tint)]"
             >
               <span className="material-symbols-outlined">arrow_back</span>
             </button>
 
-            <div className="flex items-center gap-2">
+            {/* Action buttons wrap onto new rows on narrow screens instead of
+                overflowing past the edge (which forced the PWA to zoom out). */}
+            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
   <LanguageSwitcher />
 
   {!loading && target ? (
