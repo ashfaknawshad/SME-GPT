@@ -282,8 +282,12 @@ def test_graph_guard_overrides_ungrounded_final_answer(monkeypatch):
     )
 
     final = result["messages"][-1]
+    # The invented figure is gone, and the guard replaces the answer with a clean
+    # message — NOT a raw dump of the tool JSON (that belongs in the derivation
+    # trace / Sources panel, not the chat bubble).
     assert "999,999" not in final.content
-    assert "6500.0" in final.content or "6500" in final.content
+    assert "verify" in final.content.lower()
+    assert "{" not in final.content and "6500" not in final.content
 
 
 def test_graph_greeting_needs_no_tool_call(monkeypatch):

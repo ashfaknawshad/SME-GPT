@@ -88,20 +88,32 @@ def _should_continue(state: MessagesState) -> str:
 
 def _guard_node(state: MessagesState) -> dict:
     turn = _current_turn(state["messages"])
-    tool_outputs = [m.content for m in turn if isinstance(m, ToolMessage)]
-    human_texts = [m.content for m in turn if isinstance(m, HumanMessage)]
     final = turn[-1]
 
     if not isinstance(final, AIMessage) or not final.content:
         return {}
 
+    # Ground against every figure the tools produced across the WHOLE
+    # conversation, not just this turn. Restating a total that a tool computed a
+    # few turns ago (e.g. "of that LKR 541,750, break it down…") is legitimate
+    # continuity, not a fabricated number — grounding only against the current
+    # turn's tools was flagging those as unverified and blanking good answers.
+    all_msgs = state["messages"]
+    tool_outputs = [m.content for m in all_msgs if isinstance(m, ToolMessage)]
+    human_texts = [m.content for m in all_msgs if isinstance(m, HumanMessage)]
+
     allowed = collect_allowed_numbers(tool_outputs, human_texts)
     if answer_is_grounded(final.content, allowed):
         return {}
 
+    # Never dump raw tool JSON into the chat bubble — the exact figures the tools
+    # returned are already surfaced in the "How I worked this out" trace and the
+    # Sources panel. The bubble stays a clean, honest sentence pointing there.
     fallback = (
-        "I want to avoid stating a number I haven't actually verified. Here is the raw "
-        "result from the tools I used: " + "; ".join(str(o)[:300] for o in tool_outputs[-2:])
+        "I pulled the figures but couldn't fully verify the answer I was about to "
+        "give, so I'd rather not state a number I'm unsure of. You can see exactly "
+        "what my tools returned under “How I worked this out” below — or "
+        "ask me to try again."
     ) if tool_outputs else (
         "I couldn't ground that answer in verified data — could you rephrase your question?"
     )
