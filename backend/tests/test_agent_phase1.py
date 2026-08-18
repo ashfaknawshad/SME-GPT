@@ -206,6 +206,20 @@ def test_collect_allowed_numbers_from_json_string_tool_output():
     assert 1500.0 in allowed
 
 
+def test_collect_allowed_numbers_from_text_inside_tool_output():
+    # A figure quoted verbatim in a retrieved document chunk (text, not a numeric
+    # field) is grounded — so "show me that document" answers aren't blanked.
+    chunks = [{"chunks": [{"text": "Invoice IN5 — total LKR 25,000 due 2026-06-09", "chunk_type": "key_value"}]}]
+    allowed = collect_allowed_numbers(chunks)
+    assert 25000.0 in allowed
+    assert answer_is_grounded("That invoice is for LKR 25,000.", allowed) is True
+
+
+def test_collect_allowed_numbers_from_raw_text_tool_output():
+    allowed = collect_allowed_numbers(["Outstanding balance is LKR 12,750 across 3 invoices."])
+    assert 12750.0 in allowed
+
+
 def test_answer_is_grounded_true_when_number_matches():
     assert answer_is_grounded("Your total is LKR 6,500.00.", {6500.0}) is True
 

@@ -23,6 +23,16 @@ def _is_number(x) -> bool:
 def _collect_numbers(value, out: set[float]) -> None:
     if _is_number(value):
         out.add(round(float(value), 2))
+    elif isinstance(value, str):
+        # Numbers embedded in a tool's TEXT output are grounded too — e.g. a
+        # figure quoted verbatim from a retrieved document chunk. Without this,
+        # answering "show me that document" from search_documents results (which
+        # are text, not structured numbers) got wrongly flagged as unverified.
+        for token in _MONEY_TOKEN_RE.findall(value):
+            try:
+                out.add(round(float(token.replace(",", "")), 2))
+            except ValueError:
+                pass
     elif isinstance(value, dict):
         for v in value.values():
             _collect_numbers(v, out)
@@ -61,7 +71,7 @@ def collect_allowed_numbers(tool_outputs: list, human_texts: list | None = None)
             try:
                 content = json.loads(content)
             except (ValueError, TypeError):
-                continue
+                pass  # not JSON — scan the raw text for numbers (handled below)
         _collect_numbers(content, allowed)
     for text in human_texts or []:
         for token in _MONEY_TOKEN_RE.findall(text or ""):
