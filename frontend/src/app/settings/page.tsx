@@ -304,6 +304,27 @@ export default function SettingsPage() {
     setBudgetSaved(true); setTimeout(() => setBudgetSaved(false), 2500);
   };
 
+  // The on/off state is derived from whether any targets are saved, so turning
+  // the tracker OFF has to persist an empty set — otherwise the next dashboard/
+  // settings load reads the old targets back and flips it on again.
+  const toggleBudgetTracker = async () => {
+    const next = !budgetOn;
+    setBudgetOn(next);
+    if (!next) {
+      setBudgets({});
+      const token = getToken();
+      try {
+        await fetch(`${BACKEND_URL}/user/budget-settings`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ budgets: {} }),
+        });
+      } catch {
+        setBudgetOn(!next);  // revert the toggle if the clear didn't persist
+      }
+    }
+  };
+
   const downloadAuditPack = async () => {
     setDownloading(true);
     const token = getToken();
@@ -586,7 +607,7 @@ export default function SettingsPage() {
                         : "Set monthly targets — comparison widget appears on your dashboard."}
                     </p>
                   </div>
-                  <Toggle enabled={budgetOn} onClick={() => setBudgetOn(b => !b)} />
+                  <Toggle enabled={budgetOn} onClick={toggleBudgetTracker} />
                 </div>
                 {budgetOn && (
                   <>
