@@ -7,6 +7,7 @@ import BottomNav from "@/components/layout/BottomNav";
 import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
 import ProvenancePanel, { type ArithmeticJson } from "@/components/ui/ProvenancePanel";
 import BboxOverlayViewer from "@/components/ui/BboxOverlayViewer";
+import OrderTimeline from "@/components/ui/OrderTimeline";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { addNotification } from "@/lib/notifications";
 import { confirmDialog, noticeDialog } from "@/lib/confirm";
@@ -101,6 +102,9 @@ export default function AnalysisDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  // Bumped after any save/edit so the Order Timeline refetches the reconciled
+  // PO status (e.g. marking a DN delivered flips its linked PO to fulfilled).
+  const [orderRefresh, setOrderRefresh] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [flowChangeMessage, setFlowChangeMessage] = useState("");
   // IT-27 — PO approval
@@ -244,6 +248,7 @@ export default function AnalysisDetailPage() {
       setDocument(data.document);
       setEditedDocument(data.document);
       setSuccessMessage(nextStatus === "approved" ? t.poApproveSuccess : t.poRejectSuccess);
+      setOrderRefresh((k) => k + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.poActionFailed);
     } finally {
@@ -306,6 +311,7 @@ export default function AnalysisDetailPage() {
       }
 
       setSuccessMessage("Document updated successfully.");
+      setOrderRefresh((k) => k + 1);
       addNotification({
         title: lang === "si" ? "ලේඛනය යාවත්කාලීන කෙරිණි" : "Document Updated",
         message: lang === "si"
@@ -474,6 +480,17 @@ export default function AnalysisDetailPage() {
               Financial Document Analysis
             </p>
           </div>
+
+          {/* Cross-document PO → DN → Invoice reconciliation (renders only when
+              this document is part of a linked order). */}
+          {!loading && target && (
+            <OrderTimeline
+              documentId={documentId}
+              backendUrl={BACKEND_URL}
+              lang={lang}
+              refreshKey={orderRefresh}
+            />
+          )}
 
           {successMessage && (
             <div className="mb-4 rounded-[18px] border border-[var(--success-border)] bg-[var(--success-tint)] p-4 text-[14px] text-[var(--success)]">

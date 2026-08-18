@@ -1628,6 +1628,19 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
         except Exception as _c4_err:
             print(f"[CONFIRM-SAVE] C4 entity index failed (non-fatal): {_c4_err}", flush=True)
 
+        # 3) Order reconciliation — cascade PO status from the order's Delivery
+        #    Notes (PO → DN → Invoice state machine). Saving a DN can flip its
+        #    linked PO to partially_delivered / fulfilled, and vice-versa.
+        _order_id = str(final_data.get("order_id", "") or "").strip()
+        if _order_id and _order_id.upper() not in ("NULL", "NONE"):
+            try:
+                from order_reconciliation import reconcile_order as _reconcile
+                _summary = _reconcile(_order_id, user_id)
+                if _summary.get("changes"):
+                    print(f"[CONFIRM-SAVE] order {_order_id} reconciled: {_summary['changes']}", flush=True)
+            except Exception as _rec_err:
+                print(f"[CONFIRM-SAVE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+
     threading.Thread(target=_post_save_enrich, daemon=True).start()
     # ─────────────────────────────────────────────────────────────────────
 
@@ -1703,6 +1716,17 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
 
     _log_audit_event(user_id, "DOCUMENT_UPDATED", f"document_id={document_id}")
 
+    # Order reconciliation: editing a document (e.g. marking a Delivery Note
+    # delivered) can change its linked PO's fulfilment status. Run synchronously
+    # so the persisted PO status is settled before the UI refetches the order.
+    _edit_order_id = str(update_data.get("order_id") or existing.get("order_id") or "").strip()
+    if _edit_order_id and _edit_order_id.upper() not in ("NULL", "NONE"):
+        try:
+            from order_reconciliation import reconcile_order as _reconcile
+            _reconcile(_edit_order_id, user_id)
+        except Exception as _rec_err:
+            print(f"[DOCUMENT_UPDATE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+
     # IT-27b: Send email notification when a PO is approved/rejected
     if update_data.get("po_status") in ("approved", "rejected") and update_data.get("approved_by"):
         try:
@@ -1723,6 +1747,26 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
         "flow_change_message": flow_changed_message,
         "document": updated
     }
+
+
+@app.get("/documents/{document_id}/order")
+def get_document_order(document_id: str, authorization: str = Header(default=None)):
+    """Order timeline for the order this document belongs to: the PO → DN →
+    Invoice chain (documents sharing its order_id) plus the reconciled PO
+    status and delivery/invoice/payment flags. Returns order=null when the
+    document has no order_id (nothing to link)."""
+    user_id = get_current_user_id(authorization)
+    record = get_record_by_id_for_user(user_id, document_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    order_id = str(record.get("order_id") or "").strip()
+    if not order_id or order_id.upper() in ("NULL", "NONE"):
+        return {"success": True, "order": None}
+
+    from order_reconciliation import build_order_view
+    return {"success": True, "order": build_order_view(order_id, user_id)}
+
 
 @app.delete("/documents/{document_id}")
 def delete_document(document_id: str, authorization: str = Header(default=None)):
