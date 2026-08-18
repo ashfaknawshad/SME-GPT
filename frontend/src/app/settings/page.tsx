@@ -237,10 +237,10 @@ export default function SettingsPage() {
     update("twoFactorEnabled", next);
     try {
       const token = getToken();
-      const res  = await fetch("/api/auth/2fa", {
+      const res  = await fetch("/api/profile/two-factor", {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ enable: next }),
+        body: JSON.stringify({ enabled: next }),
       });
       const data = await res.json();
       if (!res.ok) {

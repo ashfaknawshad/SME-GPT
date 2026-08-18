@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import HealthScoreCard from "@/components/ui/HealthScoreCard";
 import WhoOwesWho     from "@/components/ui/WhoOwesWho";
+import BudgetVsActual, { BudgetCategory } from "@/components/ui/BudgetVsActual";
 import { resolveBackendUrl } from "@/lib/backendUrl";
 
 const BACKEND_URL = resolveBackendUrl();
@@ -138,6 +139,7 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [hasUnread, setHasUnread] = useState(false);
   const [cashFlow, setCashFlow] = useState<Array<{month:string;inflow:number;outflow:number;net:number}>>([]);
+  const [budgetCats, setBudgetCats] = useState<BudgetCategory[]>([]);
 
   useEffect(() => {
     const load = async () => {
@@ -187,6 +189,12 @@ export default function DashboardPage() {
         fetch(`${BACKEND_URL}/cash-flow?months=6`, {
           headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
         }).then(r => r.json()).then(d => { if (d.success) setCashFlow(d.data || []); }).catch(() => {});
+
+        // Budget vs actual (this month) — only renders when the user has set
+        // targets in Settings → Budget.
+        fetch(`${BACKEND_URL}/user/budget-vs-actual`, {
+          headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+        }).then(r => r.json()).then(d => { if (d.success) setBudgetCats(d.categories || []); }).catch(() => {});
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to fetch dashboard summary.");
       }
@@ -377,6 +385,13 @@ export default function DashboardPage() {
               );
             })()}
           </section>
+
+          {/* Budget vs Actual (Settings → Budget) — only if targets are set */}
+          {budgetCats.length > 0 && (
+            <section className="mt-6">
+              <BudgetVsActual categories={budgetCats} currency="LKR" lang={lang} />
+            </section>
+          )}
 
           {/* Recent docs */}
           <section className="mt-8">

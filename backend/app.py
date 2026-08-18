@@ -2545,10 +2545,10 @@ def view_shared_document(token: str):
 
 # ── IT-46: Budget Settings ────────────────────────────────────────────────────
 
-@app.get("/user/budget-settings")
-def get_budget_settings(authorization: str = Header(default=None)):
-    """IT-46 — Return the user's monthly budget targets per expense category."""
-    user_id = get_current_user_id(authorization)
+def _load_budget_map(user_id) -> dict:
+    """Latest saved monthly budget targets for the tenant, as a plain
+    {category: value} dict (values are strings as the frontend stored them).
+    Returns {} when none set or on any read error."""
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -2561,10 +2561,80 @@ def get_budget_settings(authorization: str = Header(default=None)):
         if row:
             import json as _json
             content = row.get("content") if isinstance(row, dict) else row[0]
-            return {"success": True, "budgets": _json.loads(content)}
+            return _json.loads(content) or {}
     except Exception:
         pass
-    return {"success": True, "budgets": {}}
+    return {}
+
+
+@app.get("/user/budget-settings")
+def get_budget_settings(authorization: str = Header(default=None)):
+    """IT-46 — Return the user's monthly budget targets per expense category."""
+    user_id = get_current_user_id(authorization)
+    return {"success": True, "budgets": _load_budget_map(user_id)}
+
+
+# Each budget category maps to the flow types whose current-month total is its
+# "actual" -- the SAME income/expense/cash mapping the audit pack and reports
+# use, so the dashboard widget agrees with every other number in the app.
+_BUDGET_CATEGORY_FLOWS: dict[str, tuple[str, ...]] = {
+    "Revenue":       ("receivable", "cash_inflow", "income"),
+    "Budgeted Cost": ("payable", "cash_outflow", "expense"),
+    "Cash Inflow":   ("cash_inflow",),
+    "Cash Outflow":  ("cash_outflow",),
+}
+
+# Categories where spending PAST the target is bad (over budget) vs. income
+# targets where exceeding is good. Drives the widget's colour semantics.
+_BUDGET_SPEND_CATEGORIES = {"Budgeted Cost", "Cash Outflow"}
+
+
+@app.get("/user/budget-vs-actual")
+def get_budget_vs_actual(authorization: str = Header(default=None)):
+    """Pair each saved monthly budget target with the actual current-month
+    total for that category, computed deterministically from the tenant's
+    records. Only categories the user actually budgeted (target > 0) are
+    returned. Powers the dashboard Budget vs Actual widget."""
+    user_id = get_current_user_id(authorization)
+    from datetime import datetime
+    from dataset_manager import parse_record_for_output, filter_records_by_doc_date
+
+    budgets = _load_budget_map(user_id)
+
+    today = datetime.today()
+    lo = today.replace(day=1).strftime("%Y-%m-%d")
+    hi = today.strftime("%Y-%m-%d")
+    all_recs = [parse_record_for_output(r) for r in load_all_records(user_id=user_id)]
+    records  = filter_records_by_doc_date(all_recs, lo, hi)
+
+    def _actual(flows: set[str]) -> float:
+        return round(sum(
+            float(str(r.get("final_total_amount") or 0).replace(",", "") or 0)
+            for r in records
+            if (r.get("effective_flow_type") or r.get("flow_type", "")).lower() in flows
+        ), 2)
+
+    categories = []
+    for label, flows in _BUDGET_CATEGORY_FLOWS.items():
+        try:
+            budget = float(str(budgets.get(label) or 0).replace(",", "") or 0)
+        except (TypeError, ValueError):
+            budget = 0.0
+        if budget <= 0:
+            continue  # only surface categories the user actually budgeted
+        categories.append({
+            "category": label,
+            "budget": budget,
+            "actual": _actual(set(flows)),
+            "is_spend": label in _BUDGET_SPEND_CATEGORIES,
+        })
+
+    return {
+        "success": True,
+        "month": today.strftime("%Y-%m"),
+        "currency": "LKR",
+        "categories": categories,
+    }
 
 
 @app.put("/user/budget-settings")
