@@ -16,6 +16,7 @@ never leak another tenant's data.
 """
 from __future__ import annotations
 
+import copy
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -42,6 +43,7 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         agg: str,
         filters: Optional[list[dict]] = None,
         group_by: Optional[list[str]] = None,
+        factor: Optional[float] = None,
     ) -> dict:
         """Compute a deterministic financial total, average, count, max, or min over
         the user's saved financial documents (invoices, receipts, purchase orders,
@@ -85,10 +87,17 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
             yourself before calling.
           group_by: optional list of canonical fields (e.g. ["vendor"]) to
             break the total down by group instead of a single number.
+          factor: optional scalar multiplier applied to the result AFTER the
+            aggregation, done deterministically by this tool. Use it for
+            questions that scale a total -- "× 1.15", "add 15% tax/markup"
+            (factor 1.15), "after a 10% discount" (factor 0.9). NEVER multiply
+            or scale a figure yourself; pass `factor` and let this tool do it.
 
         Returns a dict with `value`, `currency`, `row_count`, and (if group_by
-        was used) `groups`. If the arguments are invalid you get back an
-        `error` explaining why -- fix the arguments and call again.
+        was used) `groups`. When `factor` is applied, `value`/`per_currency`
+        are the scaled results and `base_value`/`factor_applied` show the
+        pre-scaled total and the factor used. If the arguments are invalid you
+        get back an `error` explaining why -- fix the arguments and call again.
         """
         df, err = resolve_scope_with_c4(company_name, user_id)
         if err or df.empty:
@@ -110,6 +119,30 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
 
         computed = execute_plan(plan, rows)
 
+        # Optional deterministic scalar factor (e.g. ×1.15 for "add 15% markup").
+        # Done here in Python, NOT by the LLM — this is what lets the agent
+        # answer "total × 1.15" while keeping every figure tool-verified.
+        applied_factor = None
+        base_value = None
+        base_per_currency = None
+        if factor is not None:
+            try:
+                f = float(factor)
+            except (TypeError, ValueError):
+                f = None
+            if f is not None and f != 1.0:
+                applied_factor = f
+                base_value = computed.get("value")
+                base_per_currency = copy.deepcopy(computed.get("per_currency"))
+                if isinstance(computed.get("value"), (int, float)):
+                    computed["value"] = round(computed["value"] * f, 2)
+                for entry in (computed.get("per_currency") or []):
+                    if isinstance(entry.get("value"), (int, float)):
+                        entry["value"] = round(entry["value"] * f, 2)
+                for g in (computed.get("groups") or []):
+                    if isinstance(g.get("total"), (int, float)):
+                        g["total"] = round(g["total"] * f, 2)
+
         used_doc_ids = {r["document_id"] for r in computed.get("rows_used", [])}
         if used_doc_ids:
             evidence_df = df[df["document_id"].astype(str).isin(used_doc_ids)]
@@ -120,7 +153,7 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         # Trim rows_used from what the LLM sees -- it only needs the computed
         # number(s), not every matched row; full evidence goes to the caller
         # separately via the `evidence` list above.
-        return {
+        result = {
             "value": computed.get("value"),
             "currency": computed.get("currency"),
             "row_count": computed.get("row_count"),
@@ -129,6 +162,13 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
             "per_currency": computed.get("per_currency"),
             "difference": computed.get("difference"),
         }
+        if applied_factor is not None:
+            # Surface both the base and the scaled figure so the answer can cite
+            # either ("total is X; with 15% that's Y") and stay grounded.
+            result["factor_applied"] = applied_factor
+            result["base_value"] = base_value
+            result["base_per_currency"] = base_per_currency
+        return result
 
     @tool
     def search_documents(

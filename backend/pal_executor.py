@@ -154,11 +154,25 @@ def execute_plan(plan: dict, rows: list[dict]) -> dict:
         grouped = filtered.groupby(group_fields, dropna=False).apply(
             lambda g: _AGGS["sum"](_numeric_series(g, field)), include_groups=False
         ).reset_index(name=field)
-        return {
-            "value": None, "currency": currency, "operation": f"group_by_sum({field})",
+        # Also return the overall total across every group. A "which unpaid /
+        # break this down by vendor" answer usually leads with the headline
+        # figure (sum of the groups); without emitting it here that number is a
+        # multi-term sum the LLM would have to add up itself, which the grounding
+        # guard then flags as unverified and blanks the whole answer. Computing
+        # it here keeps it a real tool-produced number -- still pure pandas, the
+        # LLM never does the arithmetic.
+        overall = _AGGS["sum"](_numeric_series(filtered, field))
+        result = {
+            "value": overall, "currency": currency, "operation": f"group_by_sum({field})",
             "rows_used": _rows_used(filtered), "row_count": len(filtered),
             "groups": grouped.to_dict(orient="records"),
         }
+        if currency == "mixed":
+            # Groups may span currencies -- a single scalar total would conflate
+            # them, so surface the per-currency split the same way aggregate_sum
+            # does (and both remain grounded).
+            result["per_currency"] = _per_currency_breakdown(filtered, field, "sum")
+        return result
 
     if task == "lookup_value":
         matches = filtered.head(5)

@@ -85,6 +85,33 @@ def test_aggregate_financials_computes_deterministically(monkeypatch):
     assert {e["document_id"] for e in evidence} == {"IN1", "IN2"}
 
 
+def test_aggregate_financials_applies_scalar_factor(monkeypatch):
+    # "add up the invoices and multiply by 1.15" — the tool scales the total
+    # deterministically, so the LLM never does the arithmetic itself.
+    df = _sample_df()
+    monkeypatch.setattr("agent.tools.resolve_scope_with_c4", lambda company, user: (df, None))
+
+    tools, _ = build_tools(user_id="u1", company_name="AIESEC")
+    aggregate = next(t for t in tools if t.name == "aggregate_financials")
+
+    result = aggregate.invoke({"measure_field": "total", "agg": "sum", "filters": [], "factor": 1.15})
+
+    assert result["value"] == 7475.0          # 6500 × 1.15, computed by the tool
+    assert result["base_value"] == 6500.0      # both surfaced, so either stays grounded
+    assert result["factor_applied"] == 1.15
+
+
+def test_aggregate_financials_factor_one_is_noop(monkeypatch):
+    df = _sample_df()
+    monkeypatch.setattr("agent.tools.resolve_scope_with_c4", lambda company, user: (df, None))
+    tools, _ = build_tools(user_id="u1", company_name="AIESEC")
+    aggregate = next(t for t in tools if t.name == "aggregate_financials")
+
+    result = aggregate.invoke({"measure_field": "total", "agg": "sum", "filters": [], "factor": 1.0})
+    assert result["value"] == 6500.0
+    assert "factor_applied" not in result
+
+
 def test_aggregate_financials_applies_filters(monkeypatch):
     df = _sample_df()
     monkeypatch.setattr("agent.tools.resolve_scope_with_c4", lambda company, user: (df, None))

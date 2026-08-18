@@ -190,6 +190,22 @@ def test_execute_group_by_sum():
     result = execute_plan(plan, _ROWS)
     groups = {g["vendor"]: g["total"] for g in result["groups"]}
     assert groups == {"Acme": 600.0, "Beta Co": 300.0}
+    # group_by_sum also emits the overall total (sum of the groups) so a
+    # "break this down" answer can cite the headline figure and stay grounded.
+    assert result["value"] == 900.0
+
+
+def test_execute_group_by_sum_mixed_currency_splits_total():
+    rows = _ROWS + [
+        {"document_id": "INV3", "line_no": 1, "vendor": "Gamma", "flow_type": "payable", "currency": "SGD",
+         "doc_date": "2025-03-01", "item": "Date", "description": "Date", "qty": 1, "unit_price": 40.0, "total": 40.0},
+    ]
+    plan = {"task": "group_by_sum", "filters": [], "measure": {"field": "total", "agg": "sum"}, "group_by": ["vendor"]}
+    result = execute_plan(plan, rows)
+    # A single scalar total would conflate LKR + SGD, so it's split per currency.
+    assert result["currency"] == "mixed"
+    per = {b["currency"]: b["value"] for b in result["per_currency"]}
+    assert per == {"LKR": 900.0, "SGD": 40.0}
 
 
 def test_execute_lookup_value():
