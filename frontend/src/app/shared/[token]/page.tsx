@@ -37,13 +37,13 @@ export default function SharedDocPage() {
   }, [token]);
 
   if (loading) return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-svh items-center justify-center">
       <p className="text-[14px] text-gray-500">Loading shared document…</p>
     </div>
   );
 
   if (error || !doc) return (
-    <div className="flex min-h-screen items-center justify-center px-6">
+    <div className="flex min-h-svh items-center justify-center px-6">
       <div className="w-full max-w-md rounded-2xl p-8 text-center shadow-lg" style={{ background:"#fff", border:"1px solid #e5e7eb" }}>
         <span className="material-symbols-outlined text-[48px] text-red-400">link_off</span>
         <p className="mt-3 text-[18px] font-bold text-gray-800">Link Expired or Invalid</p>
@@ -59,7 +59,7 @@ export default function SharedDocPage() {
   const total = parseFloat(String(doc.final_total_amount || 0).replace(",","")) || 0;
 
   return (
-    <div className="min-h-screen" style={{ background:"#f8fafc" }}>
+    <div className="min-h-svh" style={{ background:"#f8fafc" }}>
       {/* Header */}
       <div className="px-6 py-4 text-white" style={{ background: color }}>
         <div className="mx-auto max-w-[680px] flex items-center justify-between">

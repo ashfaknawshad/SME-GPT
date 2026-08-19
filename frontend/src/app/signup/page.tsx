@@ -34,7 +34,7 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-svh">
       {/* ── Left brand panel (desktop only) ──────────────────── */}
       <div
         className="relative hidden flex-col justify-between overflow-hidden px-12 py-10 lg:flex lg:w-5/12 xl:w-[42%]"

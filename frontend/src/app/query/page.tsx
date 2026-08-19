@@ -108,7 +108,10 @@ function describeArgs(args: Record<string, unknown>): string {
 export default function AiAssistantChatPage() {
   const router = useRouter();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** Whether the conversation is parked at the bottom. A ref (not state) so the
+   *  scroll handler can read it every frame without re-rendering the thread. */
+  const stickToBottom = useRef(true);
 
   const [lang, setLang] = useState<AppLanguage>("en");
   const [companyName, setCompanyName] = useState("");
@@ -129,6 +132,9 @@ export default function AiAssistantChatPage() {
   // pills that open that counterparty's transaction history.
   const [supplierNames, setSupplierNames] = useState<string[]>([]);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
+  // Mirrors stickToBottom, but only to toggle the "jump to latest" button — it
+  // flips at most twice per scroll gesture, not once per scroll event.
+  const [atBottom, setAtBottom] = useState(true);
 
   const t = ui[lang];
 
@@ -200,9 +206,46 @@ export default function AiAssistantChatPage() {
     }
   }, [loadThreads, fetchDocScope]);
 
+  // Scroll the conversation, not the document: setting scrollTop on the pane
+  // itself can't move the page or fight the browser's own keyboard scrolling,
+  // the way scrollIntoView() on a sentinel could.
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+    stickToBottom.current = true;
+    setAtBottom(true);
+  }, []);
+
+  // "Near enough to the bottom" rather than exactly at it: momentum scrolling
+  // and sub-pixel heights mean scrollTop rarely lands on an exact value.
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    stickToBottom.current = near;
+    setAtBottom((prev) => (prev === near ? prev : near));
+  }, []);
+
+  // Follow new content only while the user is already at the bottom. If they
+  // scrolled up to read an earlier answer, an arriving message must not yank
+  // them away — they get the "jump to latest" button instead.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    if (stickToBottom.current) scrollToBottom("auto");
+  }, [messages, loading, scrollToBottom]);
+
+  // Opening the keyboard shrinks the pane. Re-pin the bottom so the newest
+  // message stays put instead of sliding out of view — but only when the user
+  // was pinned there to begin with. Driven by the same --keyboard-inset the
+  // layout uses, observed on <html> so this costs nothing while idle.
+  useEffect(() => {
+    const root = document.documentElement;
+    const obs = new MutationObserver(() => {
+      if (stickToBottom.current) scrollToBottom("auto");
+    });
+    obs.observe(root, { attributes: true, attributeFilter: ["data-keyboard"] });
+    return () => obs.disconnect();
+  }, [scrollToBottom]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -343,6 +386,9 @@ export default function AiAssistantChatPage() {
     setMessages((prev) => [...prev, { id: newId(), role: "user", content: question }]);
     setInput("");
     setLoading(true);
+    // Sending is an explicit "show me the latest" — re-anchor even if the user
+    // had scrolled up to check something before typing.
+    stickToBottom.current = true;
 
     try {
       const res = await fetch(`${BACKEND_URL}/chat`, {
@@ -488,12 +534,22 @@ export default function AiAssistantChatPage() {
 
   return (
     <MobileShell hideQuickActions>
-      {/* h-[100dvh] (not h-screen/100vh) + overflow-hidden: with
-          interactive-widget=resizes-content the dvh shrinks when the keyboard
-          opens, so the fixed header stays pinned and only the messages pane
-          scrolls — the header no longer scrolls off when you dismiss the
-          keyboard. */}
-      <div className="flex h-[100dvh] overflow-hidden" style={{ background: "var(--bg)" }}>
+      {/* The one place in the app that uses the fixed-height shell: the document
+          itself never scrolls, and everything is in normal flow inside it —
+          header, then the single scrolling messages pane, then the composer.
+          Nothing here is position: fixed, which is the whole point. A fixed
+          composer is positioned against the *layout* viewport, and iOS does not
+          shrink the layout viewport for the keyboard, so a fixed composer ends
+          up underneath it. An in-flow composer inside a shell whose height is
+          var(--app-height) — 100svh minus any measured keyboard overlap — is
+          pushed up by the shell itself on every engine.
+
+          Bottom padding reserves the measured bottom-nav height, which collapses
+          to 0 when the nav slides away for the keyboard. */}
+      <div
+        className="app-shell app-shell--row"
+        style={{ background: "var(--bg)", paddingBottom: "var(--bottom-nav-h)" }}
+      >
         {/* Desktop sidebar */}
         <aside className="hidden w-[272px] shrink-0 border-r lg:block" style={{ borderColor: "var(--border)" }}>
           {Sidebar}
@@ -501,22 +557,38 @@ export default function AiAssistantChatPage() {
 
         {/* Mobile drawer */}
         {sidebarOpen && (
-          <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="fixed inset-0 z-50 lg:hidden" style={{ height: "var(--app-height)" }}>
             <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.4)" }} onClick={() => setSidebarOpen(false)} />
-            <div className="absolute left-0 top-0 h-full w-[280px] shadow-2xl">{Sidebar}</div>
+            <div
+              className="absolute left-0 top-0 h-full w-[280px] shadow-2xl"
+              style={{ paddingTop: "var(--safe-top)", paddingLeft: "var(--safe-left)" }}
+            >
+              {Sidebar}
+            </div>
           </div>
         )}
 
         {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Header */}
-          <div className="shrink-0 px-4 py-3 sm:px-6" style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+          <div
+            className="app-chrome shrink-0 px-4 py-3 sm:px-6"
+            style={{
+              background: "var(--surface)",
+              borderBottom: "1px solid var(--border)",
+              // The header is a flex child of a fixed-height shell, not a
+              // sticky/fixed element, so it cannot drift when the viewport
+              // changes. It only needs to clear the status area.
+              paddingTop: "calc(var(--safe-top) + 0.75rem)",
+            }}
+          >
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <button
                   onClick={() => setSidebarOpen(true)}
-                  className="lg:hidden"
+                  className="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl lg:hidden"
                   title={t.aiAssistantThreads}
+                  aria-label={t.aiAssistantThreads}
                   style={{ color: "var(--text-2)" }}
                 >
                   <span className="material-symbols-outlined text-[22px]">menu</span>
@@ -530,7 +602,8 @@ export default function AiAssistantChatPage() {
                 <button
                   onClick={handleNewChat}
                   title={t.aiAssistantNewChat}
-                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold transition hover:opacity-80 lg:hidden"
+                  aria-label={t.aiAssistantNewChat}
+                  className="flex h-11 w-11 items-center justify-center rounded-xl text-[12px] font-semibold transition hover:opacity-80 lg:hidden"
                   style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
                 >
                   <span className="material-symbols-outlined text-[16px]">add_comment</span>
@@ -542,7 +615,7 @@ export default function AiAssistantChatPage() {
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6" style={{ paddingBottom: "160px" }}>
+          <div ref={scrollRef} onScroll={handleScroll} className="app-scroll px-4 py-5 sm:px-6">
             <div className="mx-auto w-full max-w-[900px] space-y-4">
               {/* Document context card (Stage C) — the assistant "shows" the document
                   it has open so the user knows it's in this chat's memory. */}
@@ -742,14 +815,26 @@ export default function AiAssistantChatPage() {
                 </div>
               )}
 
-              <div ref={bottomRef} />
             </div>
           </div>
 
-          {/* Input bar — fixed above BottomNav */}
-          <div className="fixed bottom-[64px] left-0 right-0 z-40 px-4 py-3 sm:px-6 lg:left-[272px]"
+          {/* Composer — in flow at the bottom of the shell, never fixed. It is
+              carried above the keyboard by the shell's own height, so it stays
+              visible and interactive on iOS and Android alike, and returns to
+              rest with no residual offset when the keyboard closes. */}
+          <div className="shrink-0 px-4 py-3 sm:px-6"
             style={{ background: "var(--surface)", borderTop: "1px solid var(--border)" }}>
-            <div className="mx-auto w-full max-w-[900px]">
+            <div className="relative mx-auto w-full max-w-[900px]">
+              {!atBottom && (
+                <button
+                  onClick={() => scrollToBottom("smooth")}
+                  aria-label={t.aiAssistantSend}
+                  className="absolute -top-14 right-0 flex h-10 w-10 items-center justify-center rounded-full shadow-lg transition hover:opacity-90"
+                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-2)" }}
+                >
+                  <span className="material-symbols-outlined text-[20px]">arrow_downward</span>
+                </button>
+              )}
               {error && (
                 <div className="mb-2 rounded-xl px-3 py-2 text-[12px] text-red-600"
                   style={{ background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.2)" }}>

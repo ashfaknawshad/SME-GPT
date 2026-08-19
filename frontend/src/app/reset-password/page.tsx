@@ -84,7 +84,7 @@ function ResetPasswordContent() {
 
   return (
     <MobileShell>
-      <div className="min-h-screen px-4 py-8" style={{ background: "var(--bg)" }}>
+      <div className="px-4 py-8" style={{ background: "var(--bg)" }}>
         <div className="mx-auto mb-4 flex max-w-[520px] items-center justify-end gap-2">
           <LanguageSwitcher />
           <ThemeToggle />

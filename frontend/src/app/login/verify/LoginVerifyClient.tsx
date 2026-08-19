@@ -64,7 +64,7 @@ export default function LoginVerifyClient({
 
   return (
     <MobileShell>
-      <div className="min-h-screen px-4 py-8" style={{ background: "var(--bg)" }}>
+      <div className="px-4 py-8" style={{ background: "var(--bg)" }}>
         <div
           className="mx-auto max-w-[520px] rounded-[30px] p-8 shadow-sm"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}

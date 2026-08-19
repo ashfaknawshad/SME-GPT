@@ -57,10 +57,18 @@ export default function SupplierHistoryDrawer({ name, lang, onClose }: { name: s
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center"
-      style={{ background: "rgba(0,0,0,0.35)" }}
+      style={{ background: "rgba(0,0,0,0.35)", height: "var(--app-height)" }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-[900px] rounded-t-3xl px-5 py-6 shadow-2xl"
-        style={{ background: "var(--surface)", maxHeight: "80vh", overflowY: "auto" }}>
+        style={{
+          background: "var(--surface)",
+          // 80vh was measured against the *large* viewport, so on mobile the
+          // sheet ran under the browser toolbar. --app-height is what's usable.
+          maxHeight: "calc(var(--app-height) * 0.85)",
+          paddingBottom: "calc(1.5rem + var(--safe-bottom))",
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+        }}>
         <div className="mb-4 flex items-center justify-between">
           <div>
             <p className="text-[18px] font-extrabold text-[var(--text-1)]">{name}</p>

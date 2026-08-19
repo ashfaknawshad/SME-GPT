@@ -198,7 +198,7 @@ export default function AnswerPage() {
   if (!result) {
     return (
       <MobileShell>
-        <div className="min-h-screen bg-[var(--bg)] pb-24">
+        <div className="pad-nav bg-[var(--bg)]">
           <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex items-center gap-3">
               <button
@@ -227,7 +227,7 @@ export default function AnswerPage() {
 
   return (
     <MobileShell>
-      <div className="min-h-screen bg-[var(--bg)] pb-24">
+      <div className="pad-nav bg-[var(--bg)]">
         <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <button

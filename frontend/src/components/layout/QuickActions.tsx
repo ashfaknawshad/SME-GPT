@@ -62,7 +62,16 @@ function QuickCashSheet({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.4)" }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-[480px] rounded-t-3xl p-6 shadow-2xl" style={{ background: "var(--surface)" }}>
+      <div
+        className="w-full max-w-[480px] rounded-t-3xl p-6 shadow-2xl"
+        style={{
+          background: "var(--surface)",
+          paddingBottom: "calc(1.5rem + var(--safe-bottom))",
+          maxHeight: "var(--app-height)",
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+        }}
+      >
         <p className="mb-4 text-[17px] font-extrabold text-[var(--text-1)]">
           {lang === "si" ? "ඉක්මන් ගෙවීම" : "Quick Cash Entry"}
         </p>
@@ -126,7 +135,10 @@ export default function QuickActions() {
 
       {/* Fan-out menu */}
       {open && (
-        <div className="fixed bottom-20 right-4 z-40 flex flex-col items-end gap-2">
+        <div
+          className="fixed right-4 z-40 flex flex-col items-end gap-2"
+          style={{ bottom: "calc(var(--bottom-nav-h) + 5.5rem)", right: "calc(1rem + var(--safe-right))" }}
+        >
           {/* Scan goes to the full upload page — same Image / PDF / Camera choice,
               preview and total-reconciliation guards as the main upload flow,
               instead of a separate image-only scanner. */}
@@ -148,8 +160,14 @@ export default function QuickActions() {
       {/* FAB */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="fixed bottom-[72px] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-xl text-white transition hover:opacity-90 active:scale-95"
-        style={{ background: open ? "#64748b" : "var(--brand-mid)" }}
+        className="fixed z-40 flex h-14 w-14 items-center justify-center rounded-full shadow-xl text-white transition hover:opacity-90 active:scale-95"
+        style={{
+          background: open ? "#64748b" : "var(--brand-mid)",
+          // Sits on the measured nav height rather than a hardcoded 72px, so it
+          // clears the home indicator and a wrapped Sinhala nav label alike.
+          bottom: "calc(var(--bottom-nav-h) + 0.75rem)",
+          right: "calc(1rem + var(--safe-right))",
+        }}
         aria-label="Quick actions">
         <span className="material-symbols-outlined text-[26px]">{open ? "close" : "add"}</span>
       </button>

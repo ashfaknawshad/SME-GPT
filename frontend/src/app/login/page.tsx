@@ -79,7 +79,7 @@ export default function LoginPage() {
   if (checkingSession) {
     return (
       <div
-        className="flex min-h-screen flex-col items-center justify-center gap-4"
+        className="flex min-h-svh flex-col items-center justify-center gap-4"
         style={{ background: "var(--bg)" }}
       >
         <div
@@ -130,7 +130,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-svh">
       {/* ── Left brand panel (desktop only) ──────────────────── */}
       <div
         className="relative hidden flex-col justify-between overflow-hidden px-12 py-10 lg:flex lg:w-5/12 xl:w-[42%]"

@@ -382,7 +382,7 @@ export default function AnalysisDetailPage() {
   
   return (
     <MobileShell>
-      <div className="min-h-screen pb-24" style={{ background: "var(--bg)" }}>
+      <div className="pad-nav" style={{ background: "var(--bg)" }}>
         <main className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <button

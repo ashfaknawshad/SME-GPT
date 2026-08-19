@@ -2,13 +2,36 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement | null>(null);
   const [lang, setLang] = useState<AppLanguage>("en");
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // Publish the nav's real rendered height as --bottom-nav-measured so no page
+  // has to hardcode "the nav is 64px tall". It genuinely varies: the admin role
+  // adds a fifth column, Sinhala labels wrap differently, and the home-indicator
+  // inset is added on top. Pages reserve space with var(--bottom-nav-h), which
+  // is this measurement — and collapses to 0 while the keyboard is open.
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    const root = document.documentElement;
+    const publish = () => {
+      root.style.setProperty("--bottom-nav-measured", `${Math.round(el.offsetHeight)}px`);
+    };
+    publish();
+    if (typeof ResizeObserver === "undefined") return; // older engines keep the initial read
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--bottom-nav-measured");
+    };
+  }, [lang, isAdmin]);
 
   useEffect(() => {
     setLang(getStoredLanguage());
@@ -30,10 +53,19 @@ export default function BottomNav() {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 backdrop-blur"
+      ref={navRef}
+      className="app-chrome fixed bottom-0 left-0 right-0 z-50 backdrop-blur transition-transform duration-200"
       style={{
         background: "var(--surface)",
         borderTop: "1px solid var(--border)",
+        // The bar itself absorbs the home indicator, so its tappable row always
+        // sits above it and its background still reaches the screen edge.
+        paddingBottom: "var(--safe-bottom)",
+        paddingLeft: "var(--safe-left)",
+        paddingRight: "var(--safe-right)",
+        // Slide out of the way while the keyboard is up — a native app does the
+        // same, and it hands those ~64px back to the conversation.
+        transform: "translateY(var(--bottom-nav-shift, 0))",
       }}
     >
       <div className="mx-auto w-full max-w-[1180px]">
@@ -44,7 +76,7 @@ export default function BottomNav() {
               <Link
                 key={item.href}
                 href={item.href}
-                className="flex flex-col items-center justify-center gap-0.5 rounded-xl px-2 py-2 text-center text-[10px] font-semibold transition sm:text-[11px]"
+                className="flex min-h-[48px] flex-col items-center justify-center gap-0.5 rounded-xl px-2 py-2 text-center text-[10px] font-semibold transition sm:text-[11px]"
                 style={{
                   color: active ? "var(--brand-mid)" : "var(--text-3)",
                 }}

@@ -117,7 +117,7 @@ export default function AdminPage() {
 
   return (
     <MobileShell>
-      <div className="min-h-screen pb-28" style={{ background: "var(--bg)" }}>
+      <div className="pad-nav" style={{ background: "var(--bg)" }}>
         <main className="mx-auto w-full max-w-[900px] px-4 py-6 sm:px-6">
           <div className="mb-5 flex items-center justify-between gap-3">
             <h1 className="text-[22px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[26px]">

@@ -74,6 +74,74 @@
   --info-border:    #2d3d55;
 }
 
+/* ─── Viewport / safe area / keyboard tokens ─────────────────────
+   Single source of truth for "how much room does the app actually have".
+   Layered deliberately (cheapest, most-supported mechanism first):
+
+     1. env(safe-area-inset-*)  — device chrome (notch, home indicator). Needs
+        viewport-fit=cover (set in layout.tsx) to be non-zero; harmless 0 on
+        every device without insets.
+     2. 100svh                  — the *small* viewport. Chosen over dvh for the
+        app shell on purpose: dvh grows/shrinks as the mobile URL bar hides,
+        which would make a pinned header and composer jitter on every scroll.
+        svh is the stable "always visible" height.
+     3. --keyboard-inset        — written by ViewportManager from the
+        VisualViewport API, and ONLY where the engine overlays the keyboard
+        instead of resizing the layout viewport (iOS/WebKit). On Android Chrome,
+        interactive-widget=resizes-content already shrinks 100svh, so the
+        measured inset stays ~0 and this term contributes nothing. One formula,
+        both platforms, no UA sniffing and no hardcoded keyboard height.
+
+   --app-height is therefore "the height the app can actually use right now". */
+:root {
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+
+  /* Overwritten by ViewportManager; 0 unless a keyboard genuinely overlays us. */
+  --keyboard-inset: 0px;
+  /* Measured by BottomNav (ResizeObserver) so nothing hardcodes a nav height. */
+  --bottom-nav-measured: 0px;
+  --bottom-nav-h: var(--bottom-nav-measured, 0px);
+
+  /* Fallback for engines without svh (pre-2022 Safari/Chrome): plain vh still
+     yields a usable, if slightly tall, shell rather than a broken one. */
+  --app-height: calc(100vh - var(--keyboard-inset));
+}
+
+@supports (height: 100svh) {
+  :root {
+    --app-height: calc(100svh - var(--keyboard-inset));
+  }
+}
+
+/* While the keyboard is up the bottom nav slides away (native apps do the
+   same), so the space it reserved must collapse in the same frame. */
+html[data-keyboard="open"] {
+  --bottom-nav-h: 0px;
+  --bottom-nav-shift: 100%;
+}
+
+/* Probe element used by ViewportManager to read the *actual* computed svh in
+   px. Comparing visualViewport.height against this — rather than against
+   window.innerHeight — is what makes keyboard detection immune to iOS URL-bar
+   collapse, which changes the visible height without a keyboard being present. */
+#__svh_probe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 100vh;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@supports (height: 100svh) {
+  #__svh_probe { height: 100svh; }
+}
+
 /* ─── Base ───────────────────────────────────────────────────── */
 html,
 body {
@@ -91,10 +159,22 @@ body {
 }
 
 body {
-  min-height: 100dvh;
+  /* Was 100dvh — the *large* viewport, i.e. taller than what is on screen while
+     the mobile toolbars are up. That left every page with a sliver of document
+     scroll, which is what let iOS drift the whole page when an input near the
+     bottom took focus. --app-height is the height that is actually usable. */
+  min-height: var(--app-height);
   background: var(--bg);
   color: var(--text-1);
   -webkit-tap-highlight-color: transparent;
+  /* `contain` (not `none`): keeps normal scrolling and the browser's own
+     gestures intact, but stops a scroll that reached the end of an inner pane
+     from chaining into the document — which on a Home Screen PWA shows up as
+     pull-to-refresh silently reloading the whole app mid-conversation. */
+  overscroll-behavior-y: contain;
+  /* iOS bumps font sizes in landscape unless this is pinned. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * {
@@ -137,4 +217,128 @@ body {
 [data-theme="dark"] ::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 4px;
+}
+
+/* ─── Application shell primitives ───────────────────────────────
+   Two page archetypes, and only two, so the scrolling architecture stays
+   obvious:
+
+     .app-shell  — a fixed-height, non-scrolling frame. The document never
+                   scrolls; exactly one child (.app-scroll) does. Used by the
+                   chat, where the header and composer must stay put.
+     .app-page   — a normal document-scrolling page. Used by everything else;
+                   the browser handles it natively, which is the right call for
+                   forms, lists and dashboards.
+
+   Anything that needs to sit at a screen edge composes the safe-area tokens
+   rather than inventing padding. */
+/* These rules are intentionally unlayered, so they win over Tailwind's
+   utilities layer — which also means a Tailwind flex-direction utility cannot
+   override .app-shell. Hence the explicit row modifier rather than `flex-row`. */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: var(--app-height);
+  overflow: hidden;
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+.app-shell--row {
+  flex-direction: row;
+}
+
+.app-page {
+  min-height: var(--app-height);
+  padding-top: var(--safe-top);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* A page built on .app-shell owns the full screen and scrolls internally, so
+   the document itself must not scroll at all — otherwise the shell and the
+   document compete and iOS drifts the page under the keyboard. Guarded by
+   :has(); engines without it simply keep the previous (min-height-limited)
+   behaviour rather than breaking. */
+body:has(.app-shell) {
+  height: var(--app-height);
+  overflow: hidden;
+}
+
+/* .app-shell replaces .app-page rather than nesting inside it: the shell owns
+   its own safe-area insets (sides here, status bar on its header, home
+   indicator on the bottom nav), so the generic page wrapper must not apply them
+   a second time. */
+.app-page:has(.app-shell) {
+  min-height: 0;
+  padding: 0;
+}
+
+/* The one intentional scroll container inside .app-shell. `min-height: 0` is
+   load-bearing: without it a flex child refuses to shrink below its content
+   and the pane grows instead of scrolling. */
+.app-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Clears the fixed bottom nav (which already absorbs the home indicator).
+   Collapses to just breathing room while the keyboard is up. */
+.pad-nav {
+  padding-bottom: calc(var(--bottom-nav-h) + 1.5rem);
+}
+
+.safe-top    { padding-top: var(--safe-top); }
+.safe-bottom { padding-bottom: var(--safe-bottom); }
+.safe-x {
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* App header: pinned, and it owns the status-bar inset so its background
+   paints all the way up behind the notch instead of leaving a strip. */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  padding-top: var(--safe-top);
+}
+
+/* ─── Touch tuning ───────────────────────────────────────────────
+   Scoped to interactive elements only — no global gesture suppression. */
+button,
+a,
+[role="button"],
+label,
+select,
+summary {
+  touch-action: manipulation; /* drops the legacy ~300ms double-tap-zoom wait */
+}
+
+@media (pointer: coarse) {
+  /* iOS Safari zooms the entire page when a focused field is under 16px, and
+     never zooms back out — it looks like the layout broke. `max()` keeps any
+     field that is already larger untouched. Coarse-pointer only, so desktop
+     typography is unchanged. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+
+  /* Chrome/label text in the app frame shouldn't be long-press selectable —
+     that's a webpage behaviour. Message content is deliberately excluded. */
+  .app-chrome {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
 }

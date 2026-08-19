@@ -162,7 +162,7 @@ export default function SessionManagementPage() {
 
   return (
     <MobileShell>
-      <div className="min-h-screen pb-24" style={{ background: "var(--bg)" }}>
+      <div className="pad-nav" style={{ background: "var(--bg)" }}>
         <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>

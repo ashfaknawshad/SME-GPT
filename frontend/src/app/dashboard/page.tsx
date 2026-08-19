@@ -244,7 +244,7 @@ export default function DashboardPage() {
 
   return (
     <MobileShell>
-      <div className="min-h-screen pb-24" style={{ background: "var(--bg)" }}>
+      <div className="pad-nav" style={{ background: "var(--bg)" }}>
         {/* Header */}
         <header style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
           {/* One row from 640px up. Below that the controls wrap to their own

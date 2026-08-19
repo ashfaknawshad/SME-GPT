@@ -16,7 +16,7 @@ export default function ResetPage() {
 
   return (
     <MobileShell>
-      <div className="mx-auto flex min-h-screen w-full max-w-[700px] items-center justify-center px-4 py-8">
+      <div className="mx-auto flex min-h-svh w-full max-w-[700px] items-center justify-center px-4 py-8">
         <div
           className="w-full rounded-[20px] p-6 shadow-sm"
           style={{ background: "var(--surface)", border: "1px solid var(--border)" }}

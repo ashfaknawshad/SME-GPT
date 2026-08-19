@@ -69,7 +69,7 @@ export default function PageShell({
 
   return (
     <MobileShell>
-      <div className="min-h-screen pb-24" style={{ background: "var(--bg)" }}>
+      <div className="pad-nav" style={{ background: "var(--bg)" }}>
         <main
           className={`mx-auto w-full ${MAX_W[width]} px-4 py-6 sm:px-6 ${mainClassName}`}
         >
