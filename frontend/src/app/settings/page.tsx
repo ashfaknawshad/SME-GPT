@@ -521,7 +521,7 @@ export default function SettingsPage() {
 
                 {/* Password modal */}
                 {pwAction && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+                  <div data-no-swipe className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
                     <div className="w-full max-w-[380px] rounded-2xl p-6 shadow-xl" style={{ background:"var(--surface)" }}>
                       <p className="text-[16px] font-extrabold text-[var(--text-1)]">{t.passwordConfirmTitle}</p>
                       <p className="mt-1 text-[13px] text-[var(--text-2)]">{t.passwordConfirmHint}</p>

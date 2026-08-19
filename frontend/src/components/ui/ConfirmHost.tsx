@@ -58,6 +58,7 @@ export default function ConfirmHost() {
 
   return (
     <div
+      data-no-swipe
       className="fixed inset-0 z-[100] flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.45)", height: "var(--app-height)" }}
       onClick={() => settle(false)}

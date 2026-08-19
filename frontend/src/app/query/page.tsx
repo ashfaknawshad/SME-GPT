@@ -557,7 +557,7 @@ export default function AiAssistantChatPage() {
 
         {/* Mobile drawer */}
         {sidebarOpen && (
-          <div className="fixed inset-0 z-50 lg:hidden" style={{ height: "var(--app-height)" }}>
+          <div data-no-swipe className="fixed inset-0 z-50 lg:hidden" style={{ height: "var(--app-height)" }}>
             <div className="absolute inset-0" style={{ background: "rgba(0,0,0,0.4)" }} onClick={() => setSidebarOpen(false)} />
             <div
               className="absolute left-0 top-0 h-full w-[280px] shadow-2xl"

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
+import { useTabSwipe } from "@/lib/useTabSwipe";
 
 export default function BottomNav() {
   const pathname = usePathname();
@@ -50,6 +51,11 @@ export default function BottomNav() {
     { label: lang === "si" ? "සැකසීම්" : "Settings",  icon: "settings",           href: "/settings" },
     ...(isAdmin ? [{ label: "Admin",                    icon: "admin_panel_settings", href: "/admin" }] : []),
   ];
+
+  // Horizontal swipe moves between these same tabs, in the same order. The nav
+  // owns the tab order, so it owns tab navigation — there is no second list to
+  // keep in sync when a tab is added or the admin column appears.
+  useTabSwipe(items.map((item) => item.href));
 
   return (
     <nav

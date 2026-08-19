@@ -56,7 +56,7 @@ export default function SupplierHistoryDrawer({ name, lang, onClose }: { name: s
   }, [name]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center"
+    <div data-no-swipe className="fixed inset-0 z-50 flex items-end justify-center"
       style={{ background: "rgba(0,0,0,0.35)", height: "var(--app-height)" }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-[900px] rounded-t-3xl px-5 py-6 shadow-2xl"

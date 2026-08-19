@@ -337,6 +337,41 @@ summary {
   }
 }
 
+/* ─── Tab swipe transition ───────────────────────────────────────
+   An enter-only cross-fade on the arriving tab.
+
+   Deliberately NOT a directional slide, tempting as that is. Any transform on
+   the page container establishes a containing block for position: fixed
+   descendants — and the bottom nav and the Quick Actions button are both fixed
+   *inside* it. A slide would drag them sideways for the duration and snap them
+   back at the end. Countering that per element is guesswork that breaks the
+   moment either one is restructured; a fade cannot break it at all.
+
+   Direction is already unambiguous from the gesture itself: the user's own
+   finger supplied it.
+
+   True finger-following paging would mean mounting all four routes at once,
+   each with its own fetching and state — a lot of machinery for 200ms.
+
+   Gated on [data-nav-dir], which only the swipe sets, so tapping the nav or
+   following any other link behaves exactly as it did before. */
+@keyframes tab-enter {
+  from { opacity: 0.45; }
+  to   { opacity: 1; }
+}
+
+html[data-nav-dir] .app-page,
+html[data-nav-dir] .app-shell {
+  animation: tab-enter 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-nav-dir] .app-page,
+  html[data-nav-dir] .app-shell {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;

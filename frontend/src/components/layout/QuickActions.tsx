@@ -60,7 +60,7 @@ function QuickCashSheet({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.4)" }}
+    <div data-no-swipe className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.4)" }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div
         className="w-full max-w-[480px] rounded-t-3xl p-6 shadow-2xl"
