@@ -12,7 +12,12 @@ import os
 
 import pytest
 
-from embedding_service import HashingEmbeddingService, get_embedding_service
+from embedding_service import (
+    EMBEDDING_DIM,
+    ColabEmbeddingService,
+    HashingEmbeddingService,
+    get_embedding_service,
+)
 from ocr_service import get_ocr_service
 from spatial_serialization import build_spatial_chunks
 from vector_index import embed_rows, flatten_chunks_for_embedding, rank_embedded_rows
@@ -57,6 +62,76 @@ def test_get_embedding_service_hashing_engine():
 def test_get_embedding_service_unknown_engine_raises():
     with pytest.raises(NotImplementedError):
         get_embedding_service("openai")
+
+
+# ---------------------------------------------------------------------------
+# ColabEmbeddingService (remote /embed, mocked -- no network)
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def test_colab_embedding_posts_raw_texts_in_batches(monkeypatch):
+    import requests
+
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append((url, json, timeout))
+        return _FakeResponse({"embeddings": [[0.0] * EMBEDDING_DIM for _ in json["texts"]]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    service = ColabEmbeddingService(base_url="https://x.ngrok.app/")
+    vectors = service.embed([f"t{i}" for i in range(ColabEmbeddingService.BATCH_SIZE + 1)])
+
+    assert len(vectors) == ColabEmbeddingService.BATCH_SIZE + 1
+    assert [len(c[1]["texts"]) for c in calls] == [ColabEmbeddingService.BATCH_SIZE, 1]
+    assert calls[0][0] == "https://x.ngrok.app/embed"
+    # The notebook adds the e5 prefix itself -- the client must not double it.
+    assert calls[0][1]["texts"][0] == "t0"
+    assert calls[0][1]["mode"] == "passage"
+
+
+def test_colab_embedding_query_uses_short_timeout(monkeypatch):
+    import requests
+
+    seen = {}
+
+    def fake_post(url, json, timeout):
+        seen["timeout"] = timeout
+        return _FakeResponse({"embeddings": [[0.0] * EMBEDDING_DIM]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    service = ColabEmbeddingService(base_url="https://x.ngrok.app")
+    service.embed(["how much do we owe?"], mode="query")
+    assert seen["timeout"] == service.query_timeout < service.passage_timeout
+
+
+def test_colab_embedding_rejects_wrong_dimension(monkeypatch):
+    import requests
+
+    monkeypatch.setattr(requests, "post", lambda url, json, timeout: _FakeResponse({"embeddings": [[0.0] * 768]}))
+    with pytest.raises(RuntimeError):
+        ColabEmbeddingService(base_url="https://x.ngrok.app").embed(["a"])
+
+
+def test_colab_embedding_without_url_raises(monkeypatch):
+    monkeypatch.delenv("COLAB_OCR_URL", raising=False)
+    with pytest.raises(RuntimeError):
+        ColabEmbeddingService().embed(["a"])
+
+
+def test_get_embedding_service_reads_engine_from_env(monkeypatch):
+    monkeypatch.setenv("EMBEDDING_ENGINE", "colab")
+    assert isinstance(get_embedding_service(), ColabEmbeddingService)
 
 
 # ---------------------------------------------------------------------------

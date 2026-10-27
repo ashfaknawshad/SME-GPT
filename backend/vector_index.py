@@ -261,8 +261,18 @@ def retrieve_top_k(
       - optional metadata pre-filter by `chunk_types`
     """
     service = service or get_embedding_service()
-    query_vector = service.embed([query], mode="query")[0]
     use_hybrid = RAG_HYBRID if hybrid is None else hybrid
+    # A remote embedding engine (Colab) can be unreachable. Rather than losing
+    # retrieval entirely, drop the dense arm and answer from the lexical arm --
+    # which needs no embedding. Without hybrid there is nothing left, so re-raise
+    # and let callers degrade to SQL-only scope as before.
+    try:
+        query_vector = service.embed([query], mode="query")[0]
+    except Exception as exc:
+        if not use_hybrid:
+            raise
+        print(f"[RAG] query embedding failed ({exc}); lexical-only retrieval.", flush=True)
+        query_vector = None
 
     # Over-fetch so fusion/rerank have a candidate pool wider than the final k.
     pool = max(k * 4, 20)
@@ -282,7 +292,10 @@ def retrieve_top_k(
             cur.execute("RELEASE SAVEPOINT ef")
         except Exception:
             cur.execute("ROLLBACK TO SAVEPOINT ef")
-        dense = _dense_candidates(cur, query_vector, tenant_id, pool, document_id, chunk_types)
+        dense = (
+            _dense_candidates(cur, query_vector, tenant_id, pool, document_id, chunk_types)
+            if query_vector is not None else []
+        )
         if use_hybrid:
             lexical = _lexical_candidates(
                 cur, _expand_query_for_lexical(query), tenant_id, pool, document_id, chunk_types
