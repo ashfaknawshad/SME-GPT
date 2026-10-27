@@ -3,6 +3,8 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  // Self-contained server bundle (.next/standalone) for the Docker image.
+  output: "standalone",
   // TEMPORARY — allow LAN + cloudflared tunnel phone testing. Remove when done.
   allowedDevOrigins: ["192.168.8.125", "*.trycloudflare.com"],
   turbopack: {

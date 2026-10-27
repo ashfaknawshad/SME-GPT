@@ -24,17 +24,40 @@ ENV HOME=/home/appuser \
 WORKDIR /home/appuser/app
 
 COPY --chown=appuser:appuser requirements.txt .
+
+# LOCAL_EMBEDDINGS=false builds a slim image without sentence-transformers /
+# PyTorch, for servers that embed on the Colab GPU instead
+# (EMBEDDING_ENGINE=colab in backend/.env). Saves ~1 GB of image and RAM.
+#   docker build --build-arg LOCAL_EMBEDDINGS=false -t sme-gpt-backend .
+ARG LOCAL_EMBEDDINGS=true
+
 # Generous timeout/retries so a slow network doesn't fail the build midway
 # through a large wheel (PyTorch is ~800 MB).
-RUN pip install --no-cache-dir --user --timeout 300 --retries 10 -r requirements.txt
+RUN if [ "$LOCAL_EMBEDDINGS" = "true" ]; then \
+      pip install --no-cache-dir --user --timeout 300 --retries 10 -r requirements.txt; \
+    else \
+      grep -v '^sentence-transformers' requirements.txt > /tmp/requirements-slim.txt && \
+      pip install --no-cache-dir --user --timeout 300 --retries 10 -r /tmp/requirements-slim.txt; \
+    fi
 
 # Bake the embedding model into the image so the first request doesn't stall on
 # a ~470 MB download, and so it doesn't depend on ephemeral runtime storage.
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
+RUN if [ "$LOCAL_EMBEDDINGS" = "true" ]; then \
+      python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"; \
+    fi
 
 COPY --chown=appuser:appuser . .
 
+# Runtime dirs the app writes to (relative to WORKDIR). Creating them here,
+# owned by appuser, means Docker volumes mounted on them inherit that ownership
+# instead of being root-owned and unwritable.
+RUN mkdir -p saved_documents incoming_json temp_processing
+
 # 7860 is the Hugging Face Spaces default; other hosts (Cloud Run, Render) inject
 # their own $PORT, which the shell-form CMD picks up.
+# --proxy-headers: behind a reverse proxy (Caddy), take the client IP from
+# X-Forwarded-For so per-IP rate limiting sees real users, not the proxy.
+# Trusting any forwarder is safe only because the container port is never
+# published -- the proxy is the sole way in.
 EXPOSE 7860
-CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-7860}
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-7860} --proxy-headers --forwarded-allow-ips="*"

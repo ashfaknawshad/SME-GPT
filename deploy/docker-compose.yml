@@ -1,0 +1,85 @@
+# SME-GPT production stack (single VPS). Lives at /opt/sme-gpt on the server;
+# .github/workflows/deploy.yml copies this file + Caddyfile there on each deploy.
+#
+# Images are built by GitHub Actions and pulled from GHCR -- nothing is built on
+# the server. IMAGE_TAG comes from /opt/sme-gpt/.env (written by the deploy job).
+#
+# Secrets live only on the server, in backend.env / frontend.env (chmod 600).
+#
+#   smegpt.ashfaknawshad.dev   -> frontend
+#   sme-api.ashfaknawshad.dev  -> backend
+#   status.ashfaknawshad.dev   -> uptime-kuma
+#
+# Only Caddy publishes ports; the app containers are reachable solely through it.
+
+name: sme-gpt
+
+services:
+  backend:
+    image: ghcr.io/ashfaknawshad/sme-gpt-backend:${IMAGE_TAG:-latest}
+    env_file: ./backend.env
+    environment:
+      PORT: "8000"
+    volumes:
+      - backend_docs:/home/appuser/app/saved_documents
+      - backend_incoming:/home/appuser/app/incoming_json
+      - backend_temp:/home/appuser/app/temp_processing
+    restart: unless-stopped
+    # Single instance only: extraction sessions are held in memory between
+    # /process-document and /confirm-save.
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    image: ghcr.io/ashfaknawshad/sme-gpt-frontend:${IMAGE_TAG:-latest}
+    env_file: ./frontend.env
+    restart: unless-stopped
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    volumes:
+      - kuma_data:/app/data
+    restart: unless-stopped
+    mem_limit: 384m
+    logging: *logging
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+      - uptime-kuma
+    logging: *logging
+
+volumes:
+  backend_docs:
+  backend_incoming:
+  backend_temp:
+  kuma_data:
+  caddy_data:
+  caddy_config:

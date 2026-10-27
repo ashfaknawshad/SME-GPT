@@ -1146,6 +1146,13 @@ class UpdateDocumentRequest(BaseModel):
 # =========================
 # ROUTES
 # =========================
+@app.get("/healthz")
+def healthz():
+    """Liveness probe for Docker / uptime monitors. Unlike /health it makes no
+    LLM calls, so polling it every few seconds costs nothing."""
+    return {"ok": True}
+
+
 @app.get("/health")
 def health():
     from llm_client import (
