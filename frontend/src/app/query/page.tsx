@@ -95,6 +95,29 @@ function toolLabel(tool: string, lang: AppLanguage): string {
   return TOOL_LABEL[tool]?.[lang] ?? tool;
 }
 
+// Tap-to-ask starters for an empty chat, so first-time users (e.g. a demo
+// audience) don't have to guess what the assistant can answer. Each one maps
+// onto a tool the agent actually has.
+type Suggestion = { icon: string; en: string; si: string };
+
+const SUGGESTIONS: Suggestion[] = [
+  { icon: "payments",        en: "How much do we owe our suppliers?",              si: "අපි සැපයුම්කරුවන්ට ගෙවිය යුතු මුදල කීයද?" },
+  { icon: "savings",         en: "How much money are customers yet to pay us?",    si: "ගනුදෙනුකරුවන්ගෙන් අපට ලැබිය යුතු මුදල කීයද?" },
+  { icon: "pending_actions", en: "Which purchase orders are still pending?",       si: "තවමත් pending තියෙන මිලදී ගැනීමේ ඇණවුම් මොනවාද?" },
+  { icon: "leaderboard",     en: "Who is our biggest supplier?",                   si: "අපේ වැඩියෙන්ම ගනුදෙනු කරන සැපයුම්කරු කවුද?" },
+  { icon: "receipt_long",    en: "Show me all unpaid invoices",                    si: "ගෙවලා නැති ඉන්වොයිස් පෙන්නන්න" },
+  { icon: "compare_arrows",  en: "Do any invoice prices differ from the order?",   si: "ඉන්වොයිස් මිල ඇණවුමේ මිලට වඩා වෙනස්ද?" },
+];
+
+const DOC_SUGGESTIONS: Suggestion[] = [
+  { icon: "summarize",    en: "Summarise this document",          si: "මේ ලේඛනය සාරාංශ කරන්න" },
+  { icon: "payments",     en: "What is the total amount?",        si: "මුළු මුදල කීයද?" },
+  { icon: "task_alt",     en: "Has this been paid?",              si: "මේක ගෙවලාද?" },
+  { icon: "local_shipping", en: "Has this order been delivered?", si: "මේ ඇණවුම deliver කරලාද?" },
+];
+
+const TRY_ASKING = { en: "Try asking", si: "මේවා අසා බලන්න" };
+
 function describeArgs(args: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(args || {})) {
@@ -370,8 +393,8 @@ export default function AiAssistantChatPage() {
     });
   };
 
-  const handleSend = async () => {
-    const question = input.trim();
+  const handleSend = async (override?: string) => {
+    const question = (override ?? input).trim();
     if (!question || loading) return;
     setError("");
 
@@ -692,6 +715,34 @@ export default function AiAssistantChatPage() {
                 </div>
               )}
 
+              {messages.length === 0 && !threadLoading && (
+                <div>
+                  <p className="mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[var(--text-3)]">
+                    {TRY_ASKING[lang]}
+                  </p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {(docScope ? DOC_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                      <button
+                        key={s.en}
+                        onClick={() => handleSend(s[lang])}
+                        disabled={loading}
+                        className="flex items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-semibold text-[var(--text-1)] transition hover:-translate-y-0.5 hover:border-[var(--brand-mid)] hover:shadow-md disabled:opacity-50"
+                        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                      >
+                        <span
+                          className="material-symbols-outlined flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[20px]"
+                          style={{ background: "var(--brand-tint)", color: "var(--brand-mid)" }}
+                        >
+                          {s.icon}
+                        </span>
+                        <span className="min-w-0 flex-1">{s[lang]}</span>
+                        <span className="material-symbols-outlined text-[18px] text-[var(--text-3)]">arrow_forward</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {threadLoading && (
                 <div className="flex justify-center py-6">
                   <span className="material-symbols-outlined animate-spin text-[22px]" style={{ color: "var(--text-3)" }}>
@@ -863,7 +914,7 @@ export default function AiAssistantChatPage() {
                   rows={1}
                   className="min-h-[36px] flex-1 resize-none overflow-y-auto bg-transparent px-1 py-1.5 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
                 />
-                <button onClick={handleSend} disabled={loading || !input.trim()} title={t.aiAssistantSend}
+                <button onClick={() => handleSend()} disabled={loading || !input.trim()} title={t.aiAssistantSend}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white transition hover:opacity-90 disabled:opacity-40"
                   style={{ background: "var(--brand)" }}>
                   <span className="material-symbols-outlined text-[19px]">send</span>
