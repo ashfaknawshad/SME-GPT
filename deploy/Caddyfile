@@ -1,0 +1,25 @@
+# Caddy obtains and renews Let's Encrypt certificates for each site automatically.
+# DNS for every name below must be an A record to the server, "DNS only" (grey
+# cloud) in Cloudflare.
+
+smegpt.ashfaknawshad.dev {
+	encode zstd gzip
+	reverse_proxy frontend:3000
+}
+
+sme-api.ashfaknawshad.dev {
+	encode zstd gzip
+	# Document uploads (PDFs / phone photos)
+	request_body {
+		max_size 50MB
+	}
+	reverse_proxy backend:8000 {
+		# Stream /process-document-stream (SSE) progress events immediately
+		flush_interval -1
+	}
+}
+
+status.ashfaknawshad.dev {
+	encode zstd gzip
+	reverse_proxy uptime-kuma:3001
+}

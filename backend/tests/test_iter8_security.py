@@ -143,7 +143,10 @@ def test_jwt_rejects_tampered_token():
     try:
         pyjwt.decode(tampered, secret, algorithms=["HS256"])
         assert False, "should have raised"
-    except pyjwt.exceptions.InvalidSignatureError:
+    # Newer PyJWT rejects the mangled signature segment as non-canonical base64
+    # (DecodeError) before checking it (InvalidSignatureError). Both subclass
+    # InvalidTokenError, which is what app.py catches to return 401.
+    except pyjwt.exceptions.InvalidTokenError:
         pass
 
 

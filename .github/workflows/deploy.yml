@@ -1,23 +1,119 @@
-name: Deploy Backend to VPS
+name: Deploy
+
+# Build backend + frontend images on GitHub's runners, push them to GHCR, then
+# have the VPS pull and restart. The server never builds anything (the Next.js
+# build alone would eat most of its RAM).
+#
+# Pull requests only build (catches a broken Dockerfile before merge); pushes to
+# main build, push and deploy.
+#
+# Repo secrets:
+#   DEPLOY_HOST         server IP
+#   DEPLOY_SSH_KEY      private key whose public half is in root's authorized_keys
+#   DEPLOY_KNOWN_HOSTS  `ssh-keyscan <host>` output (pins the server's host key)
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_PREFIX: ghcr.io/ashfaknawshad/sme-gpt
+  API_URL: https://sme-api.ashfaknawshad.dev
 
 jobs:
-  deploy:
+  build:
+    name: Build ${{ matrix.service }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: backend
+            # Embeddings run on the Colab GPU (EMBEDDING_ENGINE=colab), so the
+            # server image skips PyTorch.
+            build_args: |
+              LOCAL_EMBEDDINGS=false
+          - service: frontend
+            build_args: |
+              NEXT_PUBLIC_BACKEND_URL=https://sme-api.ashfaknawshad.dev
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
         with:
-          host: 209.97.161.5
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /opt/SME-GPT/backend
-            git pull origin main
-            docker compose up -d --build
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          build-args: ${{ matrix.build_args }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://smegpt.ashfaknawshad.dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          printf 'Host vps\n  HostName %s\n  User root\n  IdentityFile ~/.ssh/id_deploy\n  IdentitiesOnly yes\n' \
+            "${{ secrets.DEPLOY_HOST }}" > ~/.ssh/config
+
+      - name: Upload stack config
+        run: scp deploy/docker-compose.yml deploy/Caddyfile vps:/opt/sme-gpt/
+
+      - name: Pull and restart
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Token goes over stdin, never onto the remote command line.
+          printf '%s' "$GHCR_TOKEN" | ssh vps "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+          ssh vps "set -e
+            cd /opt/sme-gpt
+            echo 'IMAGE_TAG=${{ github.sha }}' > .env
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+            docker logout ghcr.io
+            docker image prune -f"
+
+      - name: Wait for the API to come up
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 "$API_URL/healthz"; then echo; echo "API healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "API did not become healthy in time"
+          ssh vps "cd /opt/sme-gpt && docker compose ps && docker compose logs --tail 80 backend"
+          exit 1

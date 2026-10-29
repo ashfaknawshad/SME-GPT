@@ -1,0 +1,14 @@
+# Secrets — must never be baked into the image
+.env
+.env.*
+
+# Rebuilt inside the image
+node_modules
+.next
+src/generated/prisma
+
+# Noise
+npm-debug.log*
+.vercel
+*.tsbuildinfo
+.DS_Store

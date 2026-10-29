@@ -3,7 +3,7 @@
 DeepSeek (the project's LLM, see docs/ARCHITECTURE.md) has no embeddings endpoint, so this is a
 separate, pluggable EmbeddingService (FR-14), mirroring `ocr_service.py`'s `OCRService` pattern.
 
-Two implementations:
+Three implementations:
 - `HashingEmbeddingService` — deterministic, dependency-free bag-of-words hashing vector. No
   network, no model download -> used by tests so the suite stays hermetic and fast (same reasoning
   as monkeypatching DeepSeek in ocr_correction tests). Good enough for lexical-overlap ranking,
@@ -13,6 +13,11 @@ Two implementations:
   including Sinhala — see docs/design/iter-4-schema.md decision #3). Lazy-loaded so importing this
   module never triggers a model download; untested in CI for the same reason MockSuryaOCRService
   stands in for a real OCR engine (no network/model download in the test suite).
+- `ColabEmbeddingService` — the same e5 model, run on the Colab GPU notebook's `/embed` route
+  (same `COLAB_OCR_URL` as OCR). Vectors are identical to the local model's (same model, same
+  prefixes, normalized), so existing ChunkEmbedding rows stay valid. Lets the backend server run
+  without PyTorch. Select with `EMBEDDING_ENGINE=colab`; if Colab is down, `embed()` raises and
+  retrieval degrades to lexical-only (see `vector_index.retrieve_top_k`).
 
 e5 models are asymmetric: embed queries with the `"query: "` prefix and documents/chunks with
 `"passage: "` (see the model card). Both implementations accept `mode` for API symmetry even
@@ -100,6 +105,52 @@ class LocalMultilingualEmbeddingService(EmbeddingService):
         return [vec.tolist() for vec in embeddings]
 
 
+class ColabEmbeddingService(EmbeddingService):
+    """Remote e5 embeddings via the Colab notebook's `POST /embed`
+    ({texts, mode} -> {embeddings, dim}). The notebook applies the e5
+    `"query: "`/`"passage: "` prefix itself, so raw texts are sent.
+
+    Query embeddings sit on the latency path of every chat question, so they
+    get a short timeout: a dead ngrok tunnel should cost a few seconds before
+    falling back to lexical search, not a hung request. Passages (confirm-save,
+    background) are batched and allowed longer."""
+
+    BATCH_SIZE = 64
+
+    def __init__(self, base_url: str | None = None):
+        self._base_url = base_url
+        self.query_timeout = float(os.getenv("EMBEDDING_QUERY_TIMEOUT_SECS", "8"))
+        self.passage_timeout = float(os.getenv("EMBEDDING_PASSAGE_TIMEOUT_SECS", "120"))
+
+    def _url(self) -> str:
+        # Read per call: COLAB_OCR_URL changes on every Colab restart.
+        base = (self._base_url or os.getenv("COLAB_OCR_URL", "")).strip()
+        if not base:
+            raise RuntimeError("COLAB_OCR_URL is empty; Colab embedding engine unavailable.")
+        return base.rstrip("/") + "/embed"
+
+    def embed(self, texts: list[str], mode: str = "passage") -> list[list[float]]:
+        import requests
+
+        if not texts:
+            return []
+        url = self._url()
+        timeout = self.query_timeout if mode == "query" else self.passage_timeout
+        out: list[list[float]] = []
+        for start in range(0, len(texts), self.BATCH_SIZE):
+            batch = [t or "" for t in texts[start:start + self.BATCH_SIZE]]
+            response = requests.post(url, json={"texts": batch, "mode": mode}, timeout=timeout)
+            response.raise_for_status()
+            vectors = response.json().get("embeddings") or []
+            if len(vectors) != len(batch) or any(len(v) != EMBEDDING_DIM for v in vectors):
+                raise RuntimeError(
+                    f"Colab /embed returned {len(vectors)} vectors for {len(batch)} texts "
+                    f"(expected {EMBEDDING_DIM}-dim each) -- is the notebook running the e5-small model?"
+                )
+            out.extend(vectors)
+        return out
+
+
 # Cache one service instance per engine. The real model holds the loaded
 # SentenceTransformer in `self._model`, so reusing the instance means the model
 # is loaded ONCE per process instead of on every call (e.g. every /ask-query
@@ -113,8 +164,9 @@ def get_embedding_service(engine: str | None = None) -> EmbeddingService:
     model ('local_multilingual') since, unlike Surya v2, embedding inference
     has no GPU/infra blocker. Returns a cached singleton per engine so the model
     loads only once. Tests construct `HashingEmbeddingService` directly rather
-    than going through this factory's default."""
-    engine = (engine or "local_multilingual").strip().lower()
+    than going through this factory's default. With no explicit `engine`, the
+    `EMBEDDING_ENGINE` env var picks it ('colab' runs on the Colab GPU)."""
+    engine = (engine or os.getenv("EMBEDDING_ENGINE") or "local_multilingual").strip().lower()
 
     cached = _SERVICE_CACHE.get(engine)
     if cached is not None:
@@ -122,6 +174,8 @@ def get_embedding_service(engine: str | None = None) -> EmbeddingService:
 
     if engine == "local_multilingual":
         service: EmbeddingService = LocalMultilingualEmbeddingService()
+    elif engine == "colab":
+        service = ColabEmbeddingService()
     elif engine == "hashing":
         service = HashingEmbeddingService()
     else:
