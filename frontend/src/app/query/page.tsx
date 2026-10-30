@@ -740,11 +740,15 @@ export default function AiAssistantChatPage() {
                         className="fade-up group flex items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-semibold text-[var(--text-1)] transition hover:-translate-y-0.5 hover:border-[var(--brand-mid)] hover:shadow-md active:scale-[0.98] disabled:opacity-50"
                         style={{ background: "var(--surface)", border: "1px solid var(--border)", animationDelay: `${i * 70}ms` }}
                       >
+                        {/* Tile and glyph are separate elements: the icon font's own
+                            display rule would otherwise override the centring. */}
                         <span
-                          className="material-symbols-outlined flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[20px] transition-transform group-hover:scale-110 group-hover:-rotate-6"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-110 group-hover:-rotate-6"
                           style={SUGGESTION_TINTS[i % SUGGESTION_TINTS.length]}
                         >
-                          {s.icon}
+                          <span className="material-symbols-outlined text-[20px] leading-none" aria-hidden="true">
+                            {s.icon}
+                          </span>
                         </span>
                         <span className="min-w-0 flex-1">{s[lang]}</span>
                         <span className="material-symbols-outlined text-[18px] text-[var(--text-3)]">arrow_forward</span>
