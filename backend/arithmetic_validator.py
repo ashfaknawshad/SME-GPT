@@ -64,10 +64,13 @@ def compute_items_total(items: List[dict]) -> Dict[str, Any]:
 
         chosen_line_total = None
 
-        if qty is not None and unit_price is not None:
-            chosen_line_total = qty * unit_price
-        elif explicit_line_total is not None:
+        # The printed line total is what the document actually charged; qty × unit
+        # price is only a fallback (a misread unit-price column would otherwise
+        # multiply every multi-quantity row a second time).
+        if explicit_line_total:
             chosen_line_total = explicit_line_total
+        elif qty is not None and unit_price is not None:
+            chosen_line_total = qty * unit_price
 
         if chosen_line_total is not None:
             chosen_line_total = round2(chosen_line_total)
