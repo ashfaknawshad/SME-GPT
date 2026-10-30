@@ -165,7 +165,9 @@ def _evict_stale_sessions():
     while True:
         time.sleep(300)  # check every 5 minutes
         try:
-            query = "DELETE FROM processing_sessions WHERE created_at < now() - interval '%s seconds'"
+            # The placeholder must stay outside the quotes: inside a literal
+            # it is never bound, and Postgres reads the interval as 1 second.
+            query = "DELETE FROM processing_sessions WHERE created_at < now() - %s * interval '1 second'"
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, (_SESSION_TTL_SECS,))
