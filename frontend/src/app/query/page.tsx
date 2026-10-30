@@ -19,6 +19,7 @@ import { humanizeFlow } from "@/lib/humanize";
 import { resolveBackendUrl } from "@/lib/backendUrl";
 import Markdown from "@/components/ui/Markdown";
 import SupplierHistoryDrawer from "@/components/ui/SupplierHistoryDrawer";
+import TypingIndicator from "@/components/ui/TypingIndicator";
 
 const BACKEND_URL = resolveBackendUrl();
 
@@ -117,6 +118,16 @@ const DOC_SUGGESTIONS: Suggestion[] = [
 ];
 
 const TRY_ASKING = { en: "Try asking", si: "මේවා අසා බලන්න" };
+
+// One colour per starter card so the grid reads as distinct choices, not a list.
+const SUGGESTION_TINTS: { background: string; color: string }[] = [
+  { background: "rgba(34,82,181,0.12)",  color: "#2252b5" },
+  { background: "rgba(22,163,74,0.12)",  color: "#16a34a" },
+  { background: "rgba(234,108,10,0.12)", color: "#ea6c0a" },
+  { background: "rgba(147,51,234,0.12)", color: "#9333ea" },
+  { background: "rgba(14,165,233,0.12)", color: "#0284c7" },
+  { background: "rgba(219,39,119,0.12)", color: "#db2777" },
+];
 
 function describeArgs(args: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -721,17 +732,17 @@ export default function AiAssistantChatPage() {
                     {TRY_ASKING[lang]}
                   </p>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {(docScope ? DOC_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                    {(docScope ? DOC_SUGGESTIONS : SUGGESTIONS).map((s, i) => (
                       <button
                         key={s.en}
                         onClick={() => handleSend(s[lang])}
                         disabled={loading}
-                        className="flex items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-semibold text-[var(--text-1)] transition hover:-translate-y-0.5 hover:border-[var(--brand-mid)] hover:shadow-md disabled:opacity-50"
-                        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                        className="fade-up group flex items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14px] font-semibold text-[var(--text-1)] transition hover:-translate-y-0.5 hover:border-[var(--brand-mid)] hover:shadow-md active:scale-[0.98] disabled:opacity-50"
+                        style={{ background: "var(--surface)", border: "1px solid var(--border)", animationDelay: `${i * 70}ms` }}
                       >
                         <span
-                          className="material-symbols-outlined flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[20px]"
-                          style={{ background: "var(--brand-tint)", color: "var(--brand-mid)" }}
+                          className="material-symbols-outlined flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[20px] transition-transform group-hover:scale-110 group-hover:-rotate-6"
+                          style={SUGGESTION_TINTS[i % SUGGESTION_TINTS.length]}
                         >
                           {s.icon}
                         </span>
@@ -752,7 +763,7 @@ export default function AiAssistantChatPage() {
               )}
 
               {messages.map((m) => (
-                <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div key={m.id} className={`fade-up flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[85%] ${m.role === "user" ? "" : "w-full"}`}>
                     <div className={`rounded-2xl px-4 py-3 text-[14px] leading-6 ${m.role === "user" || m.isError ? "whitespace-pre-line" : ""}`}
                       style={
@@ -858,11 +869,7 @@ export default function AiAssistantChatPage() {
 
               {loading && (
                 <div className="flex justify-start">
-                  <div className="flex items-center gap-2 rounded-2xl px-4 py-3 text-[13px]"
-                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-3)" }}>
-                    <span className="material-symbols-outlined animate-spin text-[16px]">progress_activity</span>
-                    {t.aiAssistantSending}
-                  </div>
+                  <TypingIndicator lang={lang} />
                 </div>
               )}
 

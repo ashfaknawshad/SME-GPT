@@ -11,6 +11,8 @@ import { addNotification } from "@/lib/notifications";
 import { getSession } from "@/lib/auth";
 import { otherPartyName } from "@/lib/format";
 import { resolveBackendUrl } from "@/lib/backendUrl";
+import ScanProgress from "@/components/ui/ScanProgress";
+import MathCheck from "@/components/ui/MathCheck";
 
 type PreviewItem = {
   description: string;
@@ -701,6 +703,12 @@ export default function UploadPage() {
                     </span>
                   </div>
                 )}
+                {/* Scanner sweep over the document while it's being read */}
+                {isProcessing && (
+                  <div className="scan-overlay" aria-hidden="true">
+                    <div className="scan-line" />
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-4">
@@ -723,24 +731,8 @@ export default function UploadPage() {
             </div>
           )}
 
-          {/* Processing indicator — friendly, jargon-free */}
-          {isProcessing && (
-            <div
-              className="mt-8 flex flex-col items-center justify-center rounded-2xl px-6 py-10 text-center"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-            >
-              <div
-                className="h-12 w-12 animate-spin rounded-full"
-                style={{ border: "3px solid var(--brand-tint)", borderTopColor: "var(--brand-mid)" }}
-              />
-              <p className="mt-5 text-[15px] font-bold text-[var(--text-1)]">{friendlyProgress}</p>
-              <p className="mt-1.5 text-[12px] text-[var(--text-2)]">
-                {lang === "si"
-                  ? "මෙයට මොහොතක් ගත විය හැක — කරුණාකර මෙම පිටුව විවෘතව තබන්න."
-                  : "This can take a moment — please keep this page open."}
-              </p>
-            </div>
-          )}
+          {/* Processing indicator — step-by-step checklist driven by the backend's real step */}
+          {isProcessing && <ScanProgress activeStep={activeStep} lang={lang} />}
 
           {/* Enterprise Security banner */}
           <div
@@ -886,6 +878,16 @@ export default function UploadPage() {
             <div ref={previewRef} className="mt-8 rounded-2xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <h2 className="text-[19px] font-extrabold text-[var(--text-1)]">{t.extractedPreview}</h2>
               <p className="mt-1 text-[13px] text-[var(--text-2)]">{t.reviewBeforeSaving}</p>
+
+              {preview.document_type !== "dn" && (
+                <MathCheck
+                  key={sessionId}
+                  items={preview.items || []}
+                  printedTotal={preview.raw_total_amount}
+                  currency={preview.currency}
+                  lang={lang}
+                />
+              )}
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 {getFieldRows(String(preview.document_type || ""), String(preview.flow_type || "")).map((row) => {
