@@ -337,9 +337,10 @@ Return ONLY one valid JSON object — no markdown, no explanations, no notes.
 
 Extract ALL line items. For each item row extract:
 - description (item name)
-- quantity (Qty/QTY/Nos/Pcs/Units/ป๊รมาณย)
-- unit_price (Rate/Price/Unit Rate/Unit Price/อาคมิล)
-- line_total (Amount/Total/รู.)
+- quantity (Qty/QTY/Nos/Pcs/Units/ප්‍රමාණය)
+- unit_price (Rate/Price/Unit Rate/Unit Price/ඒකක මිල)
+- line_total (Amount/Total/මුළු මිල/රු.)
+A column headed මුළු මිල is the line total, never the unit price.
 
 Use "" for any missing field. Do NOT skip item rows.
 Default currency to "LKR" if not stated.
@@ -516,8 +517,11 @@ FLOW TYPE:
 
 LINE ITEMS — extract EVERY row:
 - quantity labels: Qty / QTY / Nos / No. / Pcs / Units / ප්‍රමාණය
-- unit_price labels: Rate / Unit Rate / Price / U/Price / ඒකක මිල / මිල
-- line_total labels: Amount / Total / Line Total / Sub / රු.
+- unit_price labels: Rate / Unit Rate / Price / U/Price / ඒකක මිල
+- line_total labels: Amount / Total / Line Total / Sub / මුළු මිල / මුළු මුදල / රු.
+- මුළු මිල ("total price") is the LINE TOTAL column, NOT the unit price. When a row
+  has both a unit price and a total, line_total = quantity × unit_price
+  (e.g. qty 2, ඒකක මිල 220.00, මුළු මිල 440.00 → unit_price "220.00", line_total "440.00")
 - If a receipt has only price and total (no qty column): set quantity="1"
 - Preserve Sinhala item names exactly
 

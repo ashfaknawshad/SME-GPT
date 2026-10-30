@@ -62,6 +62,13 @@ def normalize_items(items):
         corrected_description = re.sub(r"^\s*Corrected text:\s*", "", corrected_description, flags=re.IGNORECASE)
         corrected_description = re.sub(r"^\s*OCR text:\s*", "", corrected_description, flags=re.IGNORECASE)
         corrected_description = corrected_description.strip()
+
+        # The line-total column was copied into unit_price (e.g. qty 2, unit 440,
+        # total 440 on a receipt that printed 220 / 440): derive the real unit price.
+        if (quantity > 0 and abs(quantity - 1) > 1e-9 and line_total > 0
+                and abs(unit_price - line_total) <= 0.01):
+            unit_price = round(line_total / quantity, 2)
+
         if quantity > 0 and unit_price > 0 and line_total == 0:
             computed_line_total = round(quantity * unit_price, 2)
         else:
