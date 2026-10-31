@@ -23,3 +23,9 @@ status.ashfaknawshad.dev {
 	encode zstd gzip
 	reverse_proxy uptime-kuma:3001
 }
+
+# Frontpage MLOps project: k3s Traefik on NodePort 30080 (reachable from Docker only).
+argocd.frontpage-ashfak.duckdns.org, mlflow.frontpage-ashfak.duckdns.org, grafana.frontpage-ashfak.duckdns.org, api.frontpage-ashfak.duckdns.org {
+	encode zstd gzip
+	reverse_proxy host.docker.internal:30080
+}
