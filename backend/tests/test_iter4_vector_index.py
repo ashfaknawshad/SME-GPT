@@ -129,6 +129,37 @@ def test_colab_embedding_without_url_raises(monkeypatch):
         ColabEmbeddingService().embed(["a"])
 
 
+def test_colab_embedding_fails_over_to_next_worker(monkeypatch):
+    import requests
+
+    tried = []
+
+    def fake_post(url, json, timeout):
+        tried.append(url)
+        if url.startswith("https://dead"):
+            raise requests.exceptions.ConnectionError("tunnel offline")
+        return _FakeResponse({"embeddings": [[0.0] * EMBEDDING_DIM for _ in json["texts"]]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setenv("COLAB_OCR_URL", "https://dead.ngrok.app, https://live.ngrok.app/")
+    vectors = ColabEmbeddingService().embed(["a"], mode="query")
+
+    assert len(vectors) == 1
+    assert tried == ["https://dead.ngrok.app/embed", "https://live.ngrok.app/embed"]
+
+
+def test_colab_embedding_raises_when_every_worker_is_down(monkeypatch):
+    import requests
+
+    def fake_post(url, json, timeout):
+        raise requests.exceptions.ConnectionError("tunnel offline")
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.setenv("COLAB_OCR_URL", "https://a.ngrok.app,https://b.ngrok.app")
+    with pytest.raises(requests.exceptions.ConnectionError):
+        ColabEmbeddingService().embed(["a"])
+
+
 def test_get_embedding_service_reads_engine_from_env(monkeypatch):
     monkeypatch.setenv("EMBEDDING_ENGINE", "colab")
     assert isinstance(get_embedding_service(), ColabEmbeddingService)

@@ -16,13 +16,19 @@ def _selected_extra_variants() -> list[str]:
     return [f for f in ("p_img", "m_img") if f in fields]
 
 
+def colab_base_urls(value: str | None = None) -> list[str]:
+    """COLAB_OCR_URL may list several OCR workers, comma-separated (e.g. a Colab
+    and a Kaggle notebook), tried in order: when one notebook's runtime ends,
+    requests fail over to the next instead of failing the upload."""
+    raw = value if value else os.getenv("COLAB_OCR_URL", "")
+    return [u.strip().rstrip("/") for u in raw.split(",") if u.strip()]
+
+
 def send_images_to_colab_ocr(processed_pages: list[dict], colab_url: str = None) -> dict:
-    final_colab_url = (colab_url or os.getenv("COLAB_OCR_URL", "")).strip()
+    base_urls = colab_base_urls(colab_url)
 
-    if not final_colab_url:
+    if not base_urls:
         raise ValueError("COLAB_OCR_URL is empty. Please set it before running the backend.")
-
-    url = final_colab_url.rstrip("/") + "/ocr"
 
     extra_variants = _selected_extra_variants()
     print(
@@ -48,24 +54,30 @@ def send_images_to_colab_ocr(processed_pages: list[dict], colab_url: str = None)
                     (field, (f"page_{idx:03d}_{field}.png", vfile, "image/png"))
                 )
 
-        response = requests.post(
-            url,
-            files=multipart_files,
-            timeout=600,
-        )
+        errors = []
+        for base in base_urls:
+            # A failed attempt may have consumed the uploads; rewind before retrying.
+            for f in opened_files:
+                f.seek(0)
+            try:
+                response = requests.post(
+                    base + "/ocr",
+                    files=multipart_files,
+                    timeout=600,
+                )
+                response.raise_for_status()
+                return response.json()
+            except requests.exceptions.Timeout:
+                errors.append(f"{base}: Colab OCR API timed out.")
+            except requests.exceptions.ConnectionError as e:
+                errors.append(f"{base}: Could not connect to Colab OCR API: {e}")
+            except requests.exceptions.HTTPError as e:
+                # A stopped ngrok tunnel answers with an HTTP error page.
+                errors.append(f"{base}: HTTP error from Colab OCR API: {e}\nResponse body: {response.text[:500]}")
+            if base != base_urls[-1]:
+                print(f"[COLAB-OCR] {base} unavailable, trying next worker", flush=True)
 
-        response.raise_for_status()
-        return response.json()
-
-    except requests.exceptions.Timeout:
-        raise Exception("Colab OCR API timed out.")
-    except requests.exceptions.ConnectionError as e:
-        raise Exception(f"Could not connect to Colab OCR API: {e}")
-    except requests.exceptions.HTTPError as e:
-        raise Exception(
-            f"HTTP error from Colab OCR API: {e}\n"
-            f"Response body: {response.text if 'response' in locals() else 'No response'}"
-        )
+        raise Exception("\n".join(errors))
     finally:
         for f in opened_files:
             try:
