@@ -297,10 +297,18 @@ def normalize_root_fields(parsed: dict, source_text: str) -> dict:
 
     _supplier_final = normalize_supplier_name(_ocr_supplier, flow_type, document_type)
 
+    # The PO a DN / invoice belongs to. Only those two types carry one, and a
+    # value equal to the document's own number is the LLM copying order_id.
+    _order_id = str(parsed.get("order_id", "")).strip()
+    _po_ref = str(parsed.get("po_reference", "") or "").strip()
+    if document_type not in ("dn", "invoice") or _po_ref.upper() in ("", "NULL", "NONE", _order_id.upper()):
+        _po_ref = ""
+
     return {
         "document_id": str(parsed.get("document_id", "")).strip(),
         "document_type": document_type,
-        "order_id": str(parsed.get("order_id", "")).strip(),
+        "order_id": _order_id,
+        "po_reference": _po_ref,
         "flow_type": flow_type,
         "company_name": _ocr_company,   # will be overridden in /confirm-save with user's company
         "supplier_name": _supplier_final,
@@ -349,6 +357,7 @@ Default currency to "LKR" if not stated.
   "document_id": "",
   "document_type": "unknown",
   "order_id": "",
+  "po_reference": "",
   "flow_type": "unknown",
   "company_name": "",
   "supplier_name": "",
@@ -537,6 +546,15 @@ WORKFLOW FIELDS (extract only if explicitly printed, use "" or null otherwise):
 - proof_of_delivery: true if there is a "Received By" / signature section, false if signature box is blank, null if unknown
 - signed: true if a signature is present, false if blank, null if unknown
 
+DOCUMENT NUMBERS — two different fields, never mix them up:
+- order_id: THIS document's own number (Invoice No / Bill No / Receipt No / DN No / PO Number / බිල් අංකය).
+- po_reference: the PURCHASE ORDER number this document refers to, ONLY on a delivery note or invoice,
+  and ONLY if printed (labels: PO No / P.O. No / PO Ref / Order No / Your Order / Customer PO / ඇණවුම් අංකය).
+  Copy it exactly as printed (e.g. "PO-2026-004"). For a PO itself, receipts, or when no PO number
+  is printed, use "". Never copy order_id into po_reference.
+  e.g. a delivery note showing "DN No: DN-0042" and "PO No: PO-2026-004"
+       → order_id "DN-0042", po_reference "PO-2026-004"
+
 CONTACT FIELDS (extract only if visible in the document):
 - company_city: city of the issuer (top of document)
 - company_phone: phone of the issuer
@@ -560,6 +578,7 @@ Return ONLY the JSON object matching this structure (no extra text):
   "document_id": "",
   "document_type": "unknown",
   "order_id": "",
+  "po_reference": "",
   "flow_type": "unknown",
   "company_name": "",
   "supplier_name": "",

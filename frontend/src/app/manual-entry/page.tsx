@@ -308,6 +308,7 @@ export default function ManualEntryPage() {
   const [docType, setDocType]     = useState<DocType>("receipt");
   const [companyRole, setCompanyRole] = useState<RoleKey>("receiver"); // "receiver" = most common for receipts
   const [orderRef, setOrderRef] = useState("");
+  const [poRef, setPoRef] = useState("");
   const [date, setDate]         = useState(new Date().toISOString().slice(0, 10));
   const [company, setCompany]   = useState("");
   const [supplier, setSupplier] = useState("");
@@ -359,6 +360,7 @@ export default function ManualEntryPage() {
     const body = {
       document_type: docType,
       order_id:      orderRef.trim() || undefined,
+      po_reference:  docType === "dn" || docType === "invoice" ? poRef.trim() || undefined : undefined,
       date:          date,
       supplier_name: supplier.trim(),
       currency:      currency,
@@ -479,6 +481,17 @@ export default function ManualEntryPage() {
                     placeholder={lang === "si" ? "ස්වයංක්‍රීයව සාදනු ලැබේ" : "Auto-generated"}
                     className="field-input w-full rounded-xl border px-4 py-2.5 text-[14px] transition" />
                 </div>
+                {/* Links a delivery note / invoice to its purchase order. */}
+                {(docType === "dn" || docType === "invoice") && (
+                  <div>
+                    <label className="mb-1.5 block text-[12px] font-semibold text-[var(--text-2)]">
+                      {lang === "si" ? "සම්බන්ධිත PO අංකය" : "Linked PO No."}
+                    </label>
+                    <input value={poRef} onChange={e => setPoRef(e.target.value)}
+                      placeholder="PO-2026-004"
+                      className="field-input w-full rounded-xl border px-4 py-2.5 text-[14px] transition" />
+                  </div>
+                )}
                 <div>
                   <label className="mb-1.5 block text-[12px] font-semibold text-[var(--text-2)]">
                     {lang === "si" ? "ඔබගේ සමාගම" : "Your Company"}{" "}
@@ -598,7 +611,7 @@ export default function ManualEntryPage() {
                       style={{ background: "#16a34a" }}>
                       {lang === "si" ? "ලේඛනය විවෘත කරන්න" : "Open document"}
                     </button>
-                    <button onClick={() => { setSuccess(""); setOrderRef(""); setSupplier(""); setNotes(""); setTaxRate(""); setItems([{ description: "", quantity: "1", unit_price: "", line_total: "" }]); }}
+                    <button onClick={() => { setSuccess(""); setOrderRef(""); setPoRef(""); setSupplier(""); setNotes(""); setTaxRate(""); setItems([{ description: "", quantity: "1", unit_price: "", line_total: "" }]); }}
                       className="rounded-lg px-3 py-1.5 text-[12px] font-semibold transition hover:opacity-80"
                       style={{ border: "1px solid var(--border)", color: "var(--text-2)" }}>
                       {lang === "si" ? "නව ලේඛනයක්" : "New document"}

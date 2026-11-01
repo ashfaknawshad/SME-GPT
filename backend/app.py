@@ -833,6 +833,7 @@ def to_preview_data(fields: dict) -> dict:
     return {
         "document_type": safe_text(fields.get("document_type")),
         "order_id": safe_text(fields.get("order_id")),
+        "po_reference": safe_text(fields.get("po_reference")),
         "flow_type": safe_text(fields.get("flow_type")),
         "company_name": safe_text(fields.get("company_name")),
         "supplier_name": safe_text(fields.get("supplier_name")),
@@ -865,6 +866,7 @@ def merge_edited_preview_into_fields(original_fields: dict, edited_preview: dict
     editable_keys = [
         "document_type",
         "order_id",
+        "po_reference",
         "flow_type",
         "company_name",
         "supplier_name",
@@ -1094,6 +1096,7 @@ class ManualDocumentRequest(BaseModel):
     """IT: Manual document entry — no OCR, data entered by the user."""
     document_type: str = "receipt"       # receipt | invoice | po | dn
     order_id: Optional[str] = None       # auto-generated if blank
+    po_reference: Optional[str] = None   # PO number a DN / invoice belongs to
     date: Optional[str] = None           # defaults to today
     supplier_name: str = ""              # the other party
     currency: str = "LKR"
@@ -1125,6 +1128,7 @@ class UpdateDocumentRequest(BaseModel):
     date: Optional[str] = None
     document_type: Optional[str] = None
     order_id: Optional[str] = None
+    po_reference: Optional[str] = None
     flow_type: Optional[str] = None
     currency: Optional[str] = None
     raw_total_amount: Optional[Any] = None
@@ -1506,7 +1510,7 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
 
     # All keys produced by to_preview_data() — editable + read-only display fields
     _ALLOWED_PREVIEW_KEYS = {
-        "document_type", "order_id", "flow_type", "company_name", "supplier_name",
+        "document_type", "order_id", "po_reference", "flow_type", "company_name", "supplier_name",
         "date", "currency", "raw_total_amount", "final_total_amount", "payable_amount",
         "cash_return", "tax_amount", "tax_rate",
         "cash_inflowed", "cash_outflowed", "category",
@@ -1640,15 +1644,13 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
         # 3) Order reconciliation — cascade PO status from the order's Delivery
         #    Notes (PO → DN → Invoice state machine). Saving a DN can flip its
         #    linked PO to partially_delivered / fulfilled, and vice-versa.
-        _order_id = str(final_data.get("order_id", "") or "").strip()
-        if _order_id and _order_id.upper() not in ("NULL", "NONE"):
-            try:
-                from order_reconciliation import reconcile_order as _reconcile
-                _summary = _reconcile(_order_id, user_id)
+        try:
+            from order_reconciliation import reconcile_after_change as _reconcile_change
+            for _summary in _reconcile_change(user_id, None, final_data):
                 if _summary.get("changes"):
-                    print(f"[CONFIRM-SAVE] order {_order_id} reconciled: {_summary['changes']}", flush=True)
-            except Exception as _rec_err:
-                print(f"[CONFIRM-SAVE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+                    print(f"[CONFIRM-SAVE] order {_summary['order_id']} reconciled: {_summary['changes']}", flush=True)
+        except Exception as _rec_err:
+            print(f"[CONFIRM-SAVE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
 
     threading.Thread(target=_post_save_enrich, daemon=True).start()
     # ─────────────────────────────────────────────────────────────────────
@@ -1728,13 +1730,13 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
     # Order reconciliation: editing a document (e.g. marking a Delivery Note
     # delivered) can change its linked PO's fulfilment status. Run synchronously
     # so the persisted PO status is settled before the UI refetches the order.
-    _edit_order_id = str(update_data.get("order_id") or existing.get("order_id") or "").strip()
-    if _edit_order_id and _edit_order_id.upper() not in ("NULL", "NONE"):
-        try:
-            from order_reconciliation import reconcile_order as _reconcile
-            _reconcile(_edit_order_id, user_id)
-        except Exception as _rec_err:
-            print(f"[DOCUMENT_UPDATE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+    # Both orders are reconciled when the edit moved the document between them.
+    try:
+        from order_reconciliation import reconcile_after_change as _reconcile_change
+        _after = updated if isinstance(updated, dict) else {**existing, **update_data}
+        _reconcile_change(user_id, existing, _after)
+    except Exception as _rec_err:
+        print(f"[DOCUMENT_UPDATE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
 
     # IT-27b: Send email notification when a PO is approved/rejected
     if update_data.get("po_status") in ("approved", "rejected") and update_data.get("approved_by"):
@@ -1769,18 +1771,19 @@ def get_document_order(document_id: str, authorization: str = Header(default=Non
     if not record:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    order_id = str(record.get("order_id") or "").strip()
-    if not order_id or order_id.upper() in ("NULL", "NONE"):
-        return {"success": True, "order": None}
-
-    from order_reconciliation import build_order_view
-    return {"success": True, "order": build_order_view(order_id, user_id)}
+    # A DN / invoice is found through the PO number it references, not its
+    # own number; order_view_for_document returns None when nothing links.
+    from order_reconciliation import order_view_for_document
+    return {"success": True, "order": order_view_for_document(record, user_id)}
 
 
 @app.delete("/documents/{document_id}")
 def delete_document(document_id: str, authorization: str = Header(default=None)):
     user_id = get_current_user_id(authorization)
     require_write_role(authorization)
+
+    # Read before deleting: the record says which order to reconcile afterwards.
+    before = get_record_by_id_for_user(user_id=user_id, document_id=document_id)
 
     deleted = delete_record_for_user(
         user_id=user_id,
@@ -1791,6 +1794,14 @@ def delete_document(document_id: str, authorization: str = Header(default=None))
         raise HTTPException(status_code=404, detail="Document not found.")
 
     _log_audit_event(user_id, "DOCUMENT_DELETED", f"document_id={document_id}")
+
+    # A deleted Delivery Note no longer counts as delivery evidence for its PO.
+    if before:
+        try:
+            from order_reconciliation import reconcile_after_change as _reconcile_change
+            _reconcile_change(user_id, before, None)
+        except Exception as _rec_err:
+            print(f"[DOCUMENT_DELETE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
 
     return {
         "success": True,
@@ -1882,6 +1893,7 @@ def create_manual_document(
     doc_data: dict = {
         "document_type":      doc_type,
         "order_id":           order_id,
+        "po_reference":       str(payload.po_reference or "").strip() if doc_type in ("dn", "invoice") else "",
         "flow_type":          flow_type,
         "effective_flow_type": flow_type,
         "company_name":       user_company,
@@ -1947,6 +1959,14 @@ def create_manual_document(
         _index_doc(doc_data, user_id)
     except Exception:
         pass
+
+    # Order reconciliation: a manually entered DN / PO joins its order like an
+    # uploaded one does.
+    try:
+        from order_reconciliation import reconcile_after_change as _reconcile_change
+        _reconcile_change(user_id, None, doc_data)
+    except Exception as _rec_err:
+        print(f"[MANUAL-ENTRY] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
 
     return {
         "success": True,

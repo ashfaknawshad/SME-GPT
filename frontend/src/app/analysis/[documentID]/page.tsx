@@ -37,6 +37,7 @@ type DocumentDetail = {
   status: string;
   language: string;
   order_id: string;
+  po_reference?: string;
   flow_type: string;
   received_status: string;
   paid_status: string;
@@ -277,6 +278,7 @@ export default function AnalysisDetailPage() {
           date: editedDocument.date,
           document_type: editedDocument.document_type,
           order_id: editedDocument.order_id,
+          po_reference: editedDocument.po_reference,
           flow_type: editedDocument.flow_type,
           currency: editedDocument.currency,
           raw_total_amount: editedDocument.raw_total_amount,
@@ -620,7 +622,7 @@ export default function AnalysisDetailPage() {
                     <span className="font-semibold text-[var(--text-1)]">{t.documentIdLabel}:</span> {target.document_id}
                     <br />
                     <span className="font-semibold text-[var(--text-1)]">
-                      {target.document_type === "dn" ? (lang === "si" ? "PO යොමු:" : "PO Reference:") :
+                      {target.document_type === "dn" ? (lang === "si" ? "DN අංකය:" : "DN Number:") :
                        target.document_type === "po" ? (lang === "si" ? "PO අංකය:" : "PO Number:") :
                        `${t.orderIdLabel}:`}
                     </span>{" "}
@@ -632,6 +634,23 @@ export default function AnalysisDetailPage() {
                       />
                     ) : target.order_id || "NULL"}
                     <br />
+                    {/* The purchase order a DN / invoice belongs to — this is what links the order. */}
+                    {(target.document_type === "dn" || target.document_type === "invoice") && (
+                      <>
+                        <span className="font-semibold text-[var(--text-1)]">
+                          {lang === "si" ? "සම්බන්ධිත PO:" : "Linked PO:"}
+                        </span>{" "}
+                        {editMode ? (
+                          <input
+                            value={target.po_reference && target.po_reference !== "NULL" ? target.po_reference : ""}
+                            onChange={(e) => updateField("po_reference", e.target.value)}
+                            placeholder="PO-2026-004"
+                            className="ml-2 rounded border border-[var(--border)] px-2 py-1 text-[13px]"
+                          />
+                        ) : (target.po_reference && target.po_reference !== "NULL" ? target.po_reference : "—")}
+                        <br />
+                      </>
+                    )}
                     <span className="font-semibold text-[var(--text-1)]">{t.dateLabel}:</span>{" "}
                     {editMode ? (
                       <input

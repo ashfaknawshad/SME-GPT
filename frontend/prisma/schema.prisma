@@ -113,6 +113,7 @@ model FinancialDocument {
   documentId         String
   documentType       String?
   orderId            String?
+  poReference        String?
   flowType           String?
   effectiveFlowType  String?
   companyName        String?

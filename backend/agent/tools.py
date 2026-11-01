@@ -277,19 +277,27 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         if err or df.empty:
             return {"error": err or "No documents found for this company."}
 
+        # Link documents the same way order reconciliation does: a PO by its own
+        # number, an invoice by the PO number it references (order_key-normalised).
+        from order_reconciliation import link_key, order_key
+
+        keys = df.apply(lambda row: link_key(row.to_dict()), axis=1)
         if order_id:
-            df = df[df["order_id"].astype(str).str.lower() == order_id.strip().lower()]
+            df = df[keys == order_key(order_id)]
             if df.empty:
                 return {"error": f"No documents found with order ID '{order_id}'."}
+            keys = keys[df.index]
 
-        # Group by order_id: a discrepancy is only meaningful between an invoice
+        # Group by order: a discrepancy is only meaningful between an invoice
         # and the PO for the SAME order -- comparing across unrelated orders
         # would manufacture false positives.
         all_found: list[dict] = []
         orders_checked = 0
-        for oid, group in df.groupby(df["order_id"].astype(str)):
-            if not oid or oid.upper() in ("", "NULL", "NONE"):
+        for key, group in df.groupby(keys):
+            if not key:
                 continue
+            po_rows = group[group["document_type"].astype(str).str.lower() == "po"]
+            oid = str(po_rows["order_id"].iloc[0]) if not po_rows.empty else key
             types = set(group["document_type"].astype(str).str.lower())
             if not ({"invoice", "po"} <= types):
                 continue

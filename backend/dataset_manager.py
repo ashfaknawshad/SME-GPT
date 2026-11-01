@@ -29,6 +29,7 @@ DATASET_COLUMNS = [
     "document_id",
     "document_type",
     "order_id",
+    "po_reference",
     "flow_type",
     "effective_flow_type",
     "company_name",
@@ -80,6 +81,8 @@ RECORD_TO_DB = {
     "document_id": "documentId",
     "document_type": "documentType",
     "order_id": "orderId",
+    # PO number a DN / invoice belongs to (links the order; see order_reconciliation)
+    "po_reference": "poReference",
     "flow_type": "flowType",
     "effective_flow_type": "effectiveFlowType",
     "company_name": "companyName",
@@ -299,6 +302,7 @@ def normalize_record(data: dict, user_id: str, force_generate_document_id: bool 
         "document_id": document_id,
         "document_type": document_type,
         "order_id": nullify_text(data.get("order_id", None)),
+        "po_reference": nullify_text(data.get("po_reference", None)),
         "flow_type": nullify_text(data.get("flow_type", None)),
         "effective_flow_type": nullify_text(
             data.get("effective_flow_type", data.get("flow_type", None))

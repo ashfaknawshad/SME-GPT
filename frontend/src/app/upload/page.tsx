@@ -22,7 +22,7 @@ type PreviewItem = {
 };
 
 type PreviewData = {
-  document_type: string; order_id: string; flow_type: string;
+  document_type: string; order_id: string; po_reference?: string; flow_type: string;
   company_name: string; supplier_name: string; date: string;
   currency: string; raw_total_amount: string | number;
   final_total_amount: string | number; payable_amount: string | number;
@@ -130,7 +130,8 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
 
   if (docType === "dn") return [
     { key: "document_type",   label: "Document Type",          opts: DOC_TYPE_OPTS },
-    { key: "order_id",        label: "PO Reference"            },
+    { key: "order_id",        label: "DN Number"               },
+    { key: "po_reference",    label: "PO Reference (links to PO)" },
     { key: "company_name",    label: "Your Company",           readonly: true },
     { key: "supplier_name",   label: supplierLabel             },
     { key: "date",            label: "Delivery Date"           },
@@ -152,6 +153,8 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
   return [
     { key: "document_type",      label: "Document Type",       opts: DOC_TYPE_OPTS },
     { key: "order_id",           label: "Reference / Bill No." },
+    // Only an invoice can belong to a purchase order.
+    ...(docType === "invoice" ? [{ key: "po_reference", label: "PO Reference (links to PO)" }] : []),
     { key: "flow_type",          label: "Flow Type",           opts: FLOW_TYPE_OPTS },
     { key: "company_name",       label: "Your Company",        readonly: true },
     { key: "supplier_name",      label: supplierLabel          },
