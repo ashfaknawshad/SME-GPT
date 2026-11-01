@@ -285,6 +285,25 @@ def test_find_discrepancies_scoped_to_order_id(monkeypatch):
     assert result["discrepancies"] == []
 
 
+def test_find_discrepancies_links_invoice_through_po_reference(monkeypatch):
+    # The invoice carries its OWN number as order_id and references the PO
+    # through po_reference -- it must still be compared against that PO.
+    invoice = _doc_row("IN5", "invoice", "INV-0077",
+                       [{"description": "Sugar bags 25kg", "quantity": 20, "unit_price": 5400.0, "line_total": 108000.0}])
+    invoice["po_reference"] = "po 2026 501"
+    po = _doc_row("PO4", "po", "PO-2026-501",
+                  [{"description": "Sugar bags 25kg", "quantity": 20, "unit_price": 4250.0, "line_total": 85000.0}])
+    monkeypatch.setattr("agent.tools.resolve_scope_with_c4",
+                        lambda company, user: (pd.DataFrame([invoice, po]), None))
+    tools, _ = build_tools(user_id="u1", company_name="AIESEC")
+    find = next(t for t in tools if t.name == "find_discrepancies")
+
+    result = find.invoke({"order_id": "PO-2026-501"})
+
+    assert result["orders_checked"] == 1
+    assert [d["order_id"] for d in result["discrepancies"] if d["is_discrepancy"]] == ["PO-2026-501"]
+
+
 def test_find_discrepancies_unknown_order_returns_error(monkeypatch):
     monkeypatch.setattr("agent.tools.resolve_scope_with_c4", lambda company, user: (_discrepancy_df(), None))
     tools, _ = build_tools(user_id="u1", company_name="AIESEC")

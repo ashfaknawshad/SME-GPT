@@ -214,21 +214,32 @@ def index_document(doc: dict, tenant_id: str) -> dict:
             )
             link_count += 1
 
-        # Cross-document edge via shared order_id
-        order_id = order_id_raw.strip()
-        if order_id and order_id.upper() not in ("NULL", "NONE", ""):
+        # Cross-document edge to every document in the same purchase order,
+        # linked the way order reconciliation links them (a DN / invoice via
+        # the PO number it references, a PO via its own number).
+        from order_reconciliation import link_key
+
+        order_key = link_key(doc)
+        if order_key:
             cur = conn.cursor()
             cur.execute(
-                'SELECT "documentId" FROM "FinancialDocument"'
-                ' WHERE "tenantId"=%s AND "orderId"=%s AND "documentId"!=%s AND "deletedAt" IS NULL',
-                (tenant_id, order_id, doc_id),
+                'SELECT * FROM "FinancialDocument"'
+                ' WHERE "tenantId"=%s AND "documentId"!=%s AND "deletedAt" IS NULL',
+                (tenant_id, doc_id),
             )
             for row in cur.fetchall():
-                other_id = row["documentId"]
+                other = {
+                    "document_type": row.get("documentType"),
+                    "order_id": row.get("orderId"),
+                    "po_reference": row.get("poReference"),
+                    "structured_json": row.get("structuredJson"),
+                }
+                if link_key(other) != order_key:
+                    continue
                 _upsert_doc_link(
                     conn, tenant_id, doc_id, "order_ref",
-                    to_doc_id=other_id, confidence=0.9,
-                    evidence={"order_id": order_id},
+                    to_doc_id=row["documentId"], confidence=0.9,
+                    evidence={"order_id": order_id_raw.strip(), "order_key": order_key},
                 )
                 link_count += 1
 

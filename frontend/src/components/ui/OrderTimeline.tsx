@@ -3,7 +3,7 @@
 // Order Timeline — the PO → DN → Invoice chain for the order a document belongs
 // to, with the reconciled PO status. Backed by GET /documents/{id}/order, which
 // computes the reconciled fulfilment status server-side (order_reconciliation).
-// Renders nothing when the document has no order_id.
+// Renders nothing when the document isn't linked to any other document.
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,11 +22,18 @@ type OrderDoc = {
   invoice_status?: string | null;
 };
 
+type OrderLine = { description: string; ordered: number; delivered: number };
+
 type OrderView = {
   order_id: string;
   documents: OrderDoc[];
   po_status: string | null;
   delivery_stage: "none" | "partial" | "full";
+  // "quantity": fulfilment compared PO line items with delivered quantities;
+  // "status": fell back to DN statuses (no quantities to compare).
+  fulfilment_mode?: "quantity" | "status";
+  lines?: OrderLine[];
+  unmatched_items?: { description: string; quantity: number }[];
   invoiced: boolean;
   paid: boolean;
   counts: { po: number; dn: number; invoice: number };
@@ -163,6 +170,45 @@ export default function OrderTimeline({
           );
         })}
       </div>
+
+      {/* Per-item delivery progress — why the PO is (not yet) fulfilled */}
+      {order.fulfilment_mode === "quantity" && order.lines && order.lines.length > 0 && (
+        <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--text-3)]">
+            {lang === "si" ? "බෙදා හරින ලද අයිතම" : "Items delivered"}
+          </p>
+          <ul className="space-y-2">
+            {order.lines.map((line) => {
+              const pct = line.ordered > 0 ? Math.min(line.delivered / line.ordered, 1) * 100 : 0;
+              const complete = line.delivered >= line.ordered;
+              return (
+                <li key={line.description}>
+                  <div className="flex items-center justify-between gap-3 text-[12px]">
+                    <span className="min-w-0 truncate text-[var(--text-2)]">{line.description}</span>
+                    <span className="shrink-0 font-semibold tabular-nums"
+                      style={{ color: complete ? "var(--success)" : "var(--text-1)" }}>
+                      {line.delivered} / {line.ordered}
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full" style={{ background: "var(--surface-2)" }}>
+                    <div className="h-full rounded-full"
+                      style={{ width: `${pct}%`, background: complete ? "var(--success)" : "var(--warn)" }} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {order.unmatched_items && order.unmatched_items.length > 0 && (
+            <p className="mt-3 rounded-lg px-3 py-2 text-[12px]"
+              style={{ background: "var(--warn-tint)", border: "1px solid var(--warn-border)", color: "var(--warn)" }}>
+              {lang === "si"
+                ? "PO එකේ නොමැති බෙදාහැරීම් අයිතම: "
+                : "Delivered items not on the PO: "}
+              {order.unmatched_items.map((u) => `${u.description} (${u.quantity})`).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
