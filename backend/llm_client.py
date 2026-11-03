@@ -95,7 +95,7 @@ _GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT_SECS", "60"))
 # ── DeepSeek (cloud, OpenAI-compatible) ───────────────────────────────────────
 DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-DEEPSEEK_MODEL    = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_MODEL    = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")  # deepseek-chat was retired 2026-07-24
 _DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT_SECS", "120"))
 
 # ── Provider selection ─────────────────────────────────────────────────────────
