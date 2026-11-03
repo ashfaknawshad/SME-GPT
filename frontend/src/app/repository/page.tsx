@@ -217,7 +217,7 @@ export default function RepositoryPage() {
     <PageShell
       title={t.repositoryTitle}
       subtitle={t.repoSubtitle}
-      width="standard"
+      width="full"
     >
 
           {/* Search bar */}
@@ -378,7 +378,7 @@ export default function RepositoryPage() {
             </div>
           ) : (
             <>
-            <div className="space-y-3">
+            <div className="card-list">
               {filtered.map((item) => {
                 const m = typeMap[item.document_type] ?? typeMap.unknown;
                 const amt = formatAmount(item);

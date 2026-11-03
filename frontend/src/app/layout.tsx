@@ -63,6 +63,12 @@ export default function RootLayout({
             __html: `try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}`,
           }}
         />
+        {/* Apply saved page layout ("full" / "classic", see lib/layout.ts) before first paint */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var l=${JSON.stringify(process.env.NEXT_PUBLIC_DEFAULT_LAYOUT === "classic" ? "classic" : "full")};try{var s=localStorage.getItem('layout');if(s==='full'||s==='classic')l=s;}catch(e){}document.documentElement.setAttribute('data-layout',l);})();`,
+          }}
+        />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"

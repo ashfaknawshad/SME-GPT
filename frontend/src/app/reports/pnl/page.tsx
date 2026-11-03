@@ -62,7 +62,7 @@ export default function PnlPage() {
       backLabel={t.backToDashboard}
       title={lang === "si" ? "ලාභ සහ පාඩු වාර්තාව" : "Profit & Loss Report"}
       subtitle={lang === "si" ? "ආදායම සහ වියදම් මාසික සාරාංශය" : "Monthly revenue vs expenses from your documents."}
-      width="standard"
+      width="full"
       topBarRight={
         <div className="flex items-center gap-2">
           <select value={months} onChange={(e) => setMonths(Number(e.target.value))}

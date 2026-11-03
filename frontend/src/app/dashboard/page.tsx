@@ -253,7 +253,7 @@ export default function DashboardPage() {
               than bunching against the left edge. This used to stack all the
               way up to lg (1024px), which left half the header empty on any
               tablet or narrowed desktop window. */}
-          <div className="mx-auto flex w-full max-w-[960px] flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="mx-auto flex w-full max-w-[var(--page-w-full)] flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             {/* min-w-0 lets this side shrink so a long company name truncates
                 instead of shoving the controls off the right edge. */}
             <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
@@ -316,7 +316,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-[960px] px-4 py-6 sm:px-6">
+        <main className="mx-auto w-full max-w-[var(--page-w-full)] px-4 py-6 sm:px-6">
           <section>
             <h2 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[28px]">
               {t.welcomeTitle}
@@ -335,222 +335,230 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Upload CTA */}
-          <section className="mt-6">
-            <button
-              onClick={() => router.push("/upload")}
-              className="flex w-full items-center gap-4 rounded-2xl px-5 py-5 text-left text-white shadow-md transition hover:opacity-90 active:scale-[0.99]"
-              style={{ background: "var(--brand)" }}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15">
-                <span className="material-symbols-outlined text-[22px]">upload_file</span>
-              </div>
-              <div>
-                <p className="text-[15px] font-bold">{t.uploadCTA}</p>
-                <p className="text-[12px] text-white/65">PDF, PNG, JPG supported</p>
-              </div>
-              <span className="material-symbols-outlined ml-auto text-white/50">chevron_right</span>
-            </button>
-          </section>
+          {/* Full layout: main column + side column from 1024px. Phones and the
+              classic layout show one column in the original order (order-*). */}
+          <div className="dash-layout">
+            <div className="dash-col">
+              {/* Stats */}
+              <section className="order-3 mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {(() => {
+                  // Show pulsing skeletons while the summary is still fetching, so counts
+                  // never flash a misleading "0" on first load.
+                  return (
+                    <>
+                      <StatCard label={lang === "si" ? "මුළු ලේඛන"  : "Total Documents"} value={String(summary?.total   ?? 0)} loading={loading} />
+                      <StatCard label={lang === "si" ? "ඉන්වොයිස්"  : "Invoices"}        value={String(summary?.invoice ?? 0)} color="var(--brand-mid)" loading={loading} />
+                      <StatCard label={lang === "si" ? "රිසිට්"      : "Receipts"}        value={String(summary?.receipt ?? 0)} color="#16a34a" loading={loading} />
+                      <StatCard label="PO / DN"                                            value={String((summary?.po ?? 0) + (summary?.dn ?? 0))} color="#7c3aed" loading={loading} />
+                    </>
+                  );
+                })()}
+              </section>
 
-          {/* Quick links to reports */}
-          <section className="mt-5 flex flex-wrap gap-2">
-            {[
-              { label: lang === "si" ? "ලාභ/පාඩු" : "P&L Report",       icon: "trending_up",  path: "/reports/pnl",      color: "#2252b5" },
-              { label: lang === "si" ? "ගෙවිය යුතු ශේෂ" : "Outstanding Payments", icon: "payments", path: "/reports/payables", color: "#dc2626" },
-              { label: lang === "si" ? "සැපයුම්කරුවන්" : "Suppliers", icon: "contacts", path: "/suppliers", color: "#16a34a" },
-              { label: lang === "si" ? "අතින් ලේඛනය" : "Manual Entry", icon: "edit_note",  path: "/manual-entry",   color: "#64748b" },
-            ].map(({ label, icon, path, color }) => (
-              <button key={path} onClick={() => router.push(path)}
-                className="flex items-center gap-2 rounded-xl px-4 py-2 text-[12px] font-bold transition hover:opacity-80"
-                style={{ background: `${color}12`, color, border: `1px solid ${color}25` }}>
-                <span className="material-symbols-outlined text-[15px]">{icon}</span>
-                {label}
-              </button>
-            ))}
-          </section>
-
-          {/* Stats */}
-          <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {(() => {
-              // Show pulsing skeletons while the summary is still fetching, so counts
-              // never flash a misleading "0" on first load.
-              return (
-                <>
-                  <StatCard label={lang === "si" ? "මුළු ලේඛන"  : "Total Documents"} value={String(summary?.total   ?? 0)} loading={loading} />
-                  <StatCard label={lang === "si" ? "ඉන්වොයිස්"  : "Invoices"}        value={String(summary?.invoice ?? 0)} color="var(--brand-mid)" loading={loading} />
-                  <StatCard label={lang === "si" ? "රිසිට්"      : "Receipts"}        value={String(summary?.receipt ?? 0)} color="#16a34a" loading={loading} />
-                  <StatCard label="PO / DN"                                            value={String((summary?.po ?? 0) + (summary?.dn ?? 0))} color="#7c3aed" loading={loading} />
-                </>
-              );
-            })()}
-          </section>
-
-          {/* Budget vs Actual (Settings → Budget) — only if targets are set */}
-          {budgetCats.length > 0 && (
-            <section className="mt-6">
-              <BudgetVsActual categories={budgetCats} currency="LKR" lang={lang} />
-            </section>
-          )}
-
-          {/* Recent docs */}
-          <section className="mt-8">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-[17px] font-extrabold tracking-tight text-[var(--text-1)]">
-                {t.recentDocuments}
-              </h3>
-              <button
-                onClick={() => router.push("/repository")}
-                className="text-[13px] font-bold transition hover:opacity-75"
-                style={{ color: "var(--brand-mid)" }}
-              >
-                {t.viewAll}
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              {loading ? (
-                Array.from({ length: 3 }).map((_, i) => <RecentDocSkeleton key={i} />)
-              ) : recentDocs.length === 0 ? (
-                <div
-                  className="rounded-2xl px-4 py-8 text-center text-[14px] text-[var(--text-2)]"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-                >
-                  {t.noSavedDocs}
-                </div>
-              ) : (
-                recentDocs.map((doc) => (
-                  <button
-                    key={doc.document_id}
-                    onClick={() => router.push(`/analysis/${doc.document_id}`)}
-                    className="w-full rounded-2xl p-4 text-left transition hover:-translate-y-px hover:shadow-md"
+              {/* IT-20 — 6-month Cash Flow Chart */}
+              {cashFlow.length > 0 && (
+                <section className="order-7 mt-8">
+                  <h3 className="mb-4 text-[17px] font-extrabold tracking-tight text-[var(--text-1)]">
+                    {lang === "si" ? "මාසික මුදල් ප්‍රවාහය" : "Monthly Cash Flow"}
+                  </h3>
+                  <div
+                    className="rounded-2xl p-4"
                     style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
                   >
-                    <div className="flex items-center gap-4">
-                      <DocIcon type={doc.document_type} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[15px] font-bold text-[var(--text-1)]">
-                          {docTitle(doc)}
-                        </p>
-                        <p className="mt-0.5 text-[11px] font-semibold text-[var(--text-3)]">
-                          {docSubLabel(doc)}
-                        </p>
-                        <p className="mt-0.5 text-[12px] text-[var(--text-2)]">
-                          {getRecentMeta(doc)}
-                        </p>
-                      </div>
-                      <span
-                        className="shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase"
-                        style={{ background: "rgba(22,163,74,0.1)", color: "#16a34a" }}
-                      >
-                        {lang === "si" ? "සුරැකිණි" : "Saved"}
-                      </span>
-                    </div>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={cashFlow} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                        <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="var(--text-3)" />
+                        <YAxis tick={{ fontSize: 10 }} stroke="var(--text-3)" tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
+                        <Tooltip
+                          formatter={(value, name) => [
+                            `LKR ${Number(value ?? 0).toLocaleString()}`,
+                            name === "inflow" ? (lang === "si" ? "ලැබීම" : "Inflow")
+                              : name === "outflow" ? (lang === "si" ? "ගෙවීම" : "Outflow")
+                              : (lang === "si" ? "ශේෂය" : "Net"),
+                          ]}
+                        />
+                        <Legend formatter={(v) => v === "inflow" ? (lang === "si" ? "ලැබීම" : "Inflow") : v === "outflow" ? (lang === "si" ? "ගෙවීම" : "Outflow") : (lang === "si" ? "ශේෂය" : "Net")} />
+                        <Bar dataKey="inflow"  fill="#16a34a" radius={[3,3,0,0]} />
+                        <Bar dataKey="outflow" fill="#dc2626" radius={[3,3,0,0]} />
+                        <Bar dataKey="net"     fill="#2252b5" radius={[3,3,0,0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </section>
+              )}
+
+              {/* Recent docs */}
+              <section className="order-5 mt-8">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-[17px] font-extrabold tracking-tight text-[var(--text-1)]">
+                    {t.recentDocuments}
+                  </h3>
+                  <button
+                    onClick={() => router.push("/repository")}
+                    className="text-[13px] font-bold transition hover:opacity-75"
+                    style={{ color: "var(--brand-mid)" }}
+                  >
+                    {t.viewAll}
                   </button>
-                ))
+                </div>
+
+                <div className="card-list">
+                  {loading ? (
+                    Array.from({ length: 3 }).map((_, i) => <RecentDocSkeleton key={i} />)
+                  ) : recentDocs.length === 0 ? (
+                    <div
+                      className="rounded-2xl px-4 py-8 text-center text-[14px] text-[var(--text-2)]"
+                      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                    >
+                      {t.noSavedDocs}
+                    </div>
+                  ) : (
+                    recentDocs.map((doc) => (
+                      <button
+                        key={doc.document_id}
+                        onClick={() => router.push(`/analysis/${doc.document_id}`)}
+                        className="w-full rounded-2xl p-4 text-left transition hover:-translate-y-px hover:shadow-md"
+                        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                      >
+                        <div className="flex items-center gap-4">
+                          <DocIcon type={doc.document_type} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[15px] font-bold text-[var(--text-1)]">
+                              {docTitle(doc)}
+                            </p>
+                            <p className="mt-0.5 text-[11px] font-semibold text-[var(--text-3)]">
+                              {docSubLabel(doc)}
+                            </p>
+                            <p className="mt-0.5 text-[12px] text-[var(--text-2)]">
+                              {getRecentMeta(doc)}
+                            </p>
+                          </div>
+                          <span
+                            className="shrink-0 rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase"
+                            style={{ background: "rgba(22,163,74,0.1)", color: "#16a34a" }}
+                          >
+                            {lang === "si" ? "සුරැකිණි" : "Saved"}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              {/* Budget vs Actual (Settings → Budget) — only if targets are set */}
+              {budgetCats.length > 0 && (
+                <section className="order-4 mt-6">
+                  <BudgetVsActual categories={budgetCats} currency="LKR" lang={lang} />
+                </section>
               )}
             </div>
-          </section>
 
-          {/* UI-D2: Invoice Insights Ready notification card */}
-          {summary?.mismatch_alerts && summary.mismatch_alerts.length > 0 && (
-            <section className="mt-5">
-              <div
-                className="rounded-2xl p-4"
-                style={{ background: "rgba(234,108,10,0.06)", border: "1px solid rgba(234,108,10,0.25)" }}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[18px]" style={{ color: "#ea6c0a" }}>
-                    insights
-                  </span>
-                  <p className="text-[13px] font-bold" style={{ color: "#ea6c0a" }}>
-                    {t.insightsReady}
-                  </p>
-                </div>
-                {summary.mismatch_alerts.map((alert) => (
-                  <div key={alert.document_id} className="mt-2">
-                    <p className="text-[12px] text-[var(--text-2)]">
-                      {lang === "si"
-                        ? <>
-                            <span className="font-semibold text-[var(--text-1)]">{alert.document_id}</span>
-                            {alert.company_name && alert.company_name !== "NULL" ? ` (${alert.company_name})` : ""}
-                            {" "}ලේඛනයේ අංකගණිත නොගැලපීමක් හඳුනාගෙන ඇත. ලබාගත් මුළු එකතු සත්‍යාපනය කරන්න.
-                          </>
-                        : <>
-                            System detected an arithmetic mismatch in{" "}
-                            <span className="font-semibold text-[var(--text-1)]">{alert.document_id}</span>
-                            {alert.company_name && alert.company_name !== "NULL" ? ` (${alert.company_name})` : ""}
-                            . Verify the extracted totals.
-                          </>
-                      }
-                    </p>
-                    <button
-                      onClick={() => router.push(`/analysis/${alert.document_id}`)}
-                      className="mt-1 text-[12px] font-bold transition hover:opacity-75"
-                      style={{ color: "var(--brand-mid)" }}
-                    >
-                      {t.viewComparison}
-                    </button>
+            <div className="dash-col">
+              {/* Upload CTA */}
+              <section className="order-1 mt-6">
+                <button
+                  onClick={() => router.push("/upload")}
+                  className="flex w-full items-center gap-4 rounded-2xl px-5 py-5 text-left text-white shadow-md transition hover:opacity-90 active:scale-[0.99]"
+                  style={{ background: "var(--brand)" }}
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15">
+                    <span className="material-symbols-outlined text-[22px]">upload_file</span>
                   </div>
+                  <div>
+                    <p className="text-[15px] font-bold">{t.uploadCTA}</p>
+                    <p className="text-[12px] text-white/65">PDF, PNG, JPG supported</p>
+                  </div>
+                  <span className="material-symbols-outlined ml-auto text-white/50">chevron_right</span>
+                </button>
+              </section>
+
+              {/* Quick links to reports */}
+              <section className="order-2 mt-5 flex flex-wrap gap-2">
+                {[
+                  { label: lang === "si" ? "ලාභ/පාඩු" : "P&L Report",       icon: "trending_up",  path: "/reports/pnl",      color: "#2252b5" },
+                  { label: lang === "si" ? "ගෙවිය යුතු ශේෂ" : "Outstanding Payments", icon: "payments", path: "/reports/payables", color: "#dc2626" },
+                  { label: lang === "si" ? "සැපයුම්කරුවන්" : "Suppliers", icon: "contacts", path: "/suppliers", color: "#16a34a" },
+                  { label: lang === "si" ? "අතින් ලේඛනය" : "Manual Entry", icon: "edit_note",  path: "/manual-entry",   color: "#64748b" },
+                ].map(({ label, icon, path, color }) => (
+                  <button key={path} onClick={() => router.push(path)}
+                    className="flex items-center gap-2 rounded-xl px-4 py-2 text-[12px] font-bold transition hover:opacity-80"
+                    style={{ background: `${color}12`, color, border: `1px solid ${color}25` }}>
+                    <span className="material-symbols-outlined text-[15px]">{icon}</span>
+                    {label}
+                  </button>
                 ))}
-              </div>
-            </section>
-          )}
+              </section>
 
-          {/* IT-20 — 6-month Cash Flow Chart */}
-          {cashFlow.length > 0 && (
-            <section className="mt-8">
-              <h3 className="mb-4 text-[17px] font-extrabold tracking-tight text-[var(--text-1)]">
-                {lang === "si" ? "මාසික මුදල් ප්‍රවාහය" : "Monthly Cash Flow"}
-              </h3>
-              <div
-                className="rounded-2xl p-4"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-              >
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={cashFlow} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                    <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="var(--text-3)" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="var(--text-3)" tickFormatter={(v) => `${(v/1000).toFixed(0)}k`} />
-                    <Tooltip
-                      formatter={(value, name) => [
-                        `LKR ${Number(value ?? 0).toLocaleString()}`,
-                        name === "inflow" ? (lang === "si" ? "ලැබීම" : "Inflow")
-                          : name === "outflow" ? (lang === "si" ? "ගෙවීම" : "Outflow")
-                          : (lang === "si" ? "ශේෂය" : "Net"),
-                      ]}
-                    />
-                    <Legend formatter={(v) => v === "inflow" ? (lang === "si" ? "ලැබීම" : "Inflow") : v === "outflow" ? (lang === "si" ? "ගෙවීම" : "Outflow") : (lang === "si" ? "ශේෂය" : "Net")} />
-                    <Bar dataKey="inflow"  fill="#16a34a" radius={[3,3,0,0]} />
-                    <Bar dataKey="outflow" fill="#dc2626" radius={[3,3,0,0]} />
-                    <Bar dataKey="net"     fill="#2252b5" radius={[3,3,0,0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
-          )}
+              {/* UI-D2: Invoice Insights Ready notification card */}
+              {summary?.mismatch_alerts && summary.mismatch_alerts.length > 0 && (
+                <section className="order-6 mt-5">
+                  <div
+                    className="rounded-2xl p-4"
+                    style={{ background: "rgba(234,108,10,0.06)", border: "1px solid rgba(234,108,10,0.25)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[18px]" style={{ color: "#ea6c0a" }}>
+                        insights
+                      </span>
+                      <p className="text-[13px] font-bold" style={{ color: "#ea6c0a" }}>
+                        {t.insightsReady}
+                      </p>
+                    </div>
+                    {summary.mismatch_alerts.map((alert) => (
+                      <div key={alert.document_id} className="mt-2">
+                        <p className="text-[12px] text-[var(--text-2)]">
+                          {lang === "si"
+                            ? <>
+                                <span className="font-semibold text-[var(--text-1)]">{alert.document_id}</span>
+                                {alert.company_name && alert.company_name !== "NULL" ? ` (${alert.company_name})` : ""}
+                                {" "}ලේඛනයේ අංකගණිත නොගැලපීමක් හඳුනාගෙන ඇත. ලබාගත් මුළු එකතු සත්‍යාපනය කරන්න.
+                              </>
+                            : <>
+                                System detected an arithmetic mismatch in{" "}
+                                <span className="font-semibold text-[var(--text-1)]">{alert.document_id}</span>
+                                {alert.company_name && alert.company_name !== "NULL" ? ` (${alert.company_name})` : ""}
+                                . Verify the extracted totals.
+                              </>
+                          }
+                        </p>
+                        <button
+                          onClick={() => router.push(`/analysis/${alert.document_id}`)}
+                          className="mt-1 text-[12px] font-bold transition hover:opacity-75"
+                          style={{ color: "var(--brand-mid)" }}
+                        >
+                          {t.viewComparison}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
 
-          {/* ── Feature 2: Widget 1 — Business Health Score ─────────────── */}
-          {summary?.health_score && (
-            <section className="mt-6">
-              <HealthScoreCard
-                health={summary.health_score}
-                lang={lang}
-                currency="LKR"
-              />
-            </section>
-          )}
+              {/* ── Feature 2: Widget 1 — Business Health Score ─────────────── */}
+              {summary?.health_score && (
+                <section className="order-8 mt-6">
+                  <HealthScoreCard
+                    health={summary.health_score}
+                    lang={lang}
+                    currency="LKR"
+                  />
+                </section>
+              )}
 
-          {/* ── Feature 2: Widget 4 — Who Owes Who ─────────────────────── */}
-          {(summary?.top_receivables?.length || summary?.top_payables?.length) ? (
-            <section className="mt-6">
-              <WhoOwesWho
-                receivables={summary.top_receivables || []}
-                payables={summary.top_payables || []}
-                lang={lang}
-              />
-            </section>
-          ) : null}
+              {/* ── Feature 2: Widget 4 — Who Owes Who ─────────────────────── */}
+              {(summary?.top_receivables?.length || summary?.top_payables?.length) ? (
+                <section className="order-9 mt-6">
+                  <WhoOwesWho
+                    receivables={summary.top_receivables || []}
+                    payables={summary.top_payables || []}
+                    lang={lang}
+                  />
+                </section>
+              ) : null}
+            </div>
+          </div>
 
         </main>
 
