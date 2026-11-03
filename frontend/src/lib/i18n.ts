@@ -179,6 +179,11 @@ export const ui = {
     analysing: "Analysing…",
     voiceInput: "Voice input",
     listeningMsg: "Listening… speak your question now",
+    voiceUnsupported: "Voice input isn't supported in this browser. Use Chrome or Edge.",
+    voiceNoSpeech: "Didn't catch that — tap the mic and try again.",
+    voiceNotAllowed: "Microphone is blocked. Allow microphone access in your browser's site settings.",
+    voiceNetwork: "Voice input needs an internet connection.",
+    voiceFailed: "Voice input stopped unexpectedly. Please try again.",
     languageToggle: "Language",
     sourceDocuments: "Source: your saved documents only",
 
@@ -668,6 +673,11 @@ export const ui = {
     analysing: "විශ්ලේෂණය කරමින්...",
     voiceInput: "හඬ ආදානය",
     listeningMsg: "ඇසෙමින් ඇත… ප්‍රශ්නය කතා කරන්න",
+    voiceUnsupported: "මෙම බ්‍රව්සරය හඬ ආදානයට සහාය නොදක්වයි. Chrome හෝ Edge භාවිතා කරන්න.",
+    voiceNoSpeech: "ඇසුණේ නැත — මයික් එක ඔබා නැවත උත්සාහ කරන්න.",
+    voiceNotAllowed: "මයික්‍රෆෝනය අවහිර කර ඇත. බ්‍රව්සරයේ අඩවි සැකසුම් තුළ මයික්‍රෆෝනයට ඉඩ දෙන්න.",
+    voiceNetwork: "හඬ ආදානයට අන්තර්ජාල සම්බන්ධතාවයක් අවශ්‍යයි.",
+    voiceFailed: "හඬ ආදානය අනපේක්ෂිතව නතර විය. කරුණාකර නැවත උත්සාහ කරන්න.",
     languageToggle: "භාෂාව",
     sourceDocuments: "ප්‍රභවය: ඔබගේ සුරකිගත් ලේඛන",
 

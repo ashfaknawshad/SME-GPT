@@ -20,6 +20,7 @@ import { resolveBackendUrl } from "@/lib/backendUrl";
 import Markdown from "@/components/ui/Markdown";
 import SupplierHistoryDrawer from "@/components/ui/SupplierHistoryDrawer";
 import TypingIndicator from "@/components/ui/TypingIndicator";
+import { useSpeechInput, type SpeechInputError } from "@/lib/useSpeechInput";
 
 const BACKEND_URL = resolveBackendUrl();
 
@@ -156,7 +157,6 @@ export default function AiAssistantChatPage() {
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [error, setError] = useState("");
-  const [isListening, setIsListening] = useState(false);
   const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
   const [expandedTrace, setExpandedTrace] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -288,30 +288,28 @@ export default function AiAssistantChatPage() {
     ta.style.height = `${Math.min(Math.max(ta.scrollHeight, 44), 160)}px`;
   }, [input]);
 
+  const VOICE_ERRORS: Record<SpeechInputError, string> = {
+    unsupported: t.voiceUnsupported,
+    "no-speech": t.voiceNoSpeech,
+    "not-allowed": t.voiceNotAllowed,
+    network: t.voiceNetwork,
+    failed: t.voiceFailed,
+  };
+  const voice = useSpeechInput({
+    lang: lang === "si" ? "si-LK" : "en-US",
+    onText: setInput,
+    onError: (e) => setError(VOICE_ERRORS[e]),
+  });
+  const isListening = voice.listening;
+
+  // The mic button toggles: start dictating after whatever is typed, or stop.
   const handleVoice = () => {
-    type SR = { new(): {
-      lang: string; interimResults: boolean; continuous: boolean;
-      onresult: ((e: { results: { [i: number]: { [j: number]: { transcript: string } } } }) => void) | null;
-      onend: (() => void) | null;
-      onerror: (() => void) | null;
-      start: () => void;
-    }};
-    const w = window as unknown as Record<string, unknown>;
-    const SRClass = (w.SpeechRecognition || w.webkitSpeechRecognition) as SR | undefined;
-    if (!SRClass) { setError("Voice input is not supported in this browser. Use Chrome or Edge."); return; }
-    const recognition = new SRClass();
-    recognition.lang = lang === "si" ? "si-LK" : "en-US";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    setIsListening(true);
-    recognition.onresult = (e) => {
-      const transcript = Array.from({ length: (e.results as unknown as ArrayLike<unknown>).length },
-        (_, i) => (e.results[i][0] as {transcript: string}).transcript).join("");
-      setInput(transcript);
-    };
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => { setIsListening(false); setError("Voice input failed. Please try again."); };
-    recognition.start();
+    if (voice.listening) {
+      voice.stop();
+      return;
+    }
+    setError("");
+    voice.start(input);
   };
 
   const handleNewChat = () => {
@@ -407,6 +405,8 @@ export default function AiAssistantChatPage() {
   const handleSend = async (override?: string) => {
     const question = (override ?? input).trim();
     if (!question || loading) return;
+    // Sending ends dictation; otherwise it would keep writing into the cleared box.
+    voice.stop();
     setError("");
 
     if (!companyName.trim()) {
@@ -912,9 +912,18 @@ export default function AiAssistantChatPage() {
               <div className="flex items-end gap-2 rounded-2xl px-2 py-2"
                 style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
                 <button onClick={handleVoice} title={t.voiceInput}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition hover:opacity-70"
-                  style={{ color: isListening ? "#dc2626" : "var(--text-3)" }}>
-                  <span className="material-symbols-outlined text-[19px]">{isListening ? "stop_circle" : "mic"}</span>
+                  aria-label={t.voiceInput} aria-pressed={isListening}
+                  className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition hover:opacity-70"
+                  style={{
+                    color: isListening ? "#dc2626" : "var(--text-3)",
+                    background: isListening ? "rgba(220,38,38,0.1)" : "transparent",
+                  }}>
+                  {/* Pulsing ring while recording, so it's obvious the mic is live */}
+                  {isListening && (
+                    <span className="absolute inset-0 animate-ping rounded-xl" aria-hidden="true"
+                      style={{ background: "rgba(220,38,38,0.25)" }} />
+                  )}
+                  <span className="material-symbols-outlined relative text-[19px]">{isListening ? "stop_circle" : "mic"}</span>
                 </button>
                 <textarea
                   ref={textareaRef}
