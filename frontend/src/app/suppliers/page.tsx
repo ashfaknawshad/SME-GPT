@@ -99,7 +99,7 @@ export default function SuppliersPage() {
       backLabel={t.backToDashboard}
       title={lang === "si" ? "සැපයුම්කරුවන් සහ ගනුදෙනුකරුවන්" : "Suppliers & Customers"}
       subtitle={lang === "si" ? "ඔබගේ ලේඛනවල ඇති සියලු ගනුදෙනු පාර්ශ්ව" : "All counterparties across your documents with full transaction history."}
-      width="standard"
+      width="full"
     >
 
           {/* Duplicate vendor alert */}
@@ -190,7 +190,7 @@ export default function SuppliersPage() {
               {lang === "si" ? "සැපයුම්කරුවන් හමු නොවිය." : "No suppliers found."}
             </div>
           ) : (
-            <div className="mt-5 space-y-3">
+            <div className="mt-5 card-list">
               {filtered.map((s) => (
                 <div key={s.name} className="rounded-2xl p-5"
                   style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>

@@ -259,7 +259,7 @@ export default function PayablesPage() {
       subtitle={lang === "si"
         ? "PO සහ ඉන්වොයිස් දෙගුණ ගණනය නොකර නිවැරදි ශේෂය"
         : "True outstanding balances — POs and Invoices are kept separate to avoid double-counting the same transaction."}
-      width="standard"
+      width="full"
     >
       {loading ? (
         <ReportSkeleton />
@@ -269,7 +269,7 @@ export default function PayablesPage() {
           {error}
         </div>
       ) : (
-        <div className="space-y-8">
+        <div className="report-halves space-y-8">
 
           {/* ══════════════ TOP HALF — PAYABLES ══════════════ */}
           <section>
@@ -312,8 +312,8 @@ export default function PayablesPage() {
               emptyMsg={lang === "si" ? "ලේඛන නොමැත" : "Nothing here."} />
           </section>
 
-          {/* Divider */}
-          <div style={{ height: 1, background: "var(--border)" }} />
+          {/* Divider (hidden when the halves sit side by side) */}
+          <div className="report-divider" style={{ height: 1, background: "var(--border)" }} />
 
           {/* ══════════════ BOTTOM HALF — RECEIVABLES ══════════════ */}
           <section>

@@ -10,6 +10,7 @@ import PageShell from "@/components/layout/PageShell";
 import { getSession, logoutUser, SessionUser, getStoredToken } from "@/lib/auth";
 import { AppLanguage, getStoredLanguage, ui, setStoredLanguage } from "@/lib/i18n";
 import { useTheme } from "@/lib/theme";
+import { useLayout } from "@/lib/layout";
 import { noticeDialog } from "@/lib/confirm";
 import { resolveBackendUrl } from "@/lib/backendUrl";
 
@@ -119,6 +120,7 @@ function ChevronRow({ icon, title, subtitle, onClick, iconBg="#f3f4f6", iconColo
 export default function SettingsPage() {
   const router     = useRouter();
   const { theme, toggle: toggleTheme } = useTheme();
+  const { layout, setLayout } = useLayout();
   const [lang, setLang]     = useState<AppLanguage>("en");
   const [session, setSession] = useState<SessionUser | null>(null);
   const [tab, setTab]         = useState<Tab>("account");
@@ -587,6 +589,20 @@ export default function SettingsPage() {
                       </div>
                     </div>
                     <Toggle enabled={theme === "dark"} onClick={toggleTheme} />
+                  </div>
+                  <Divider />
+                  {/* Full width vs the original centred layout (lib/layout.ts) */}
+                  <div className="flex w-full items-center justify-between gap-4 px-5 py-4">
+                    <div className="flex min-w-0 flex-1 items-center gap-4">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ background:"var(--brand-tint)", color:"var(--brand-mid)" }}>
+                        <span className="material-symbols-outlined text-[20px]">{layout === "full" ? "width_full" : "width_normal"}</span>
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-semibold text-[var(--text-1)]">{t.fullWidthLayout}</p>
+                        <p className="text-[12px] text-[var(--text-3)] mt-0.5">{layout === "full" ? t.fullWidthLayoutOn : t.fullWidthLayoutOff}</p>
+                      </div>
+                    </div>
+                    <Toggle enabled={layout === "full"} onClick={() => setLayout(layout === "full" ? "classic" : "full")} />
                   </div>
                 </Card>
 

@@ -13,6 +13,9 @@
  *  "narrow"   → max-w-[760px]   — Settings, Query
  *  "standard" → max-w-[960px]   — most pages (default)
  *  "wide"     → max-w-[1180px]  — Dashboard, Analysis, Manual Entry
+ *  "full"     → --page-w-full   — list pages (Repository, Suppliers, Reports):
+ *               spreads across wide screens in the "full" layout, 960px in
+ *               "classic" (see lib/layout.ts)
  */
 
 import { useRouter } from "next/navigation";
@@ -21,12 +24,13 @@ import BottomNav from "./BottomNav";
 import ThemeToggle from "./ThemeToggle";
 import LanguageSwitcher from "./LanguageSwitcher";
 
-type Width = "narrow" | "standard" | "wide";
+type Width = "narrow" | "standard" | "wide" | "full";
 
 const MAX_W: Record<Width, string> = {
   narrow:   "max-w-[760px]",
   standard: "max-w-[960px]",
   wide:     "max-w-[1180px]",
+  full:     "max-w-[var(--page-w-full)]",
 };
 
 interface PageShellProps {
