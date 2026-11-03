@@ -78,3 +78,56 @@ def test_check_deepseek_health_reports_missing_key(monkeypatch):
 def test_no_ollama_health_symbol():
     """check_ollama_health must be gone (local inference removed)."""
     assert not hasattr(llm_client, "check_ollama_health")
+
+
+# ── agent engine (agent/llm.py) ──────────────────────────────────────────────
+
+class ChatGoogleGenerativeAI:
+    """Stand-in named like the real Gemini model: answers via `reply` or raises."""
+
+    def __init__(self, reply=None, error=None):
+        self.reply, self.error = reply, error
+
+    def bind_tools(self, tools):
+        from langchain_core.runnables import RunnableLambda
+
+        def run(_messages):
+            if self.error:
+                raise self.error
+            return self.reply
+
+        return RunnableLambda(run)
+
+
+def _gemini_and_deepseek(monkeypatch, deepseek_reply="DS_ANSWER"):
+    import agent.llm as agent_llm
+
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "gm-key")
+    monkeypatch.setattr(llm_client, "DEEPSEEK_API_KEY", "ds-key")
+    monkeypatch.setattr(llm_client, "QUERY_PROVIDER", "gemini")
+    monkeypatch.setattr(agent_llm, "_deepseek_model",
+                        lambda temperature: ChatGoogleGenerativeAI(reply=deepseek_reply))
+    return agent_llm
+
+
+def test_agent_falls_back_to_deepseek_when_gemini_fails(monkeypatch):
+    agent_llm = _gemini_and_deepseek(monkeypatch)
+    gemini = ChatGoogleGenerativeAI(error=RuntimeError("429 quota exceeded"))
+    model = agent_llm.bind_tools_with_fallback(gemini, tools=[])
+    assert model.invoke(["hi"]) == "DS_ANSWER"
+
+
+def test_agent_uses_gemini_when_it_works(monkeypatch):
+    agent_llm = _gemini_and_deepseek(monkeypatch)
+    model = agent_llm.bind_tools_with_fallback(ChatGoogleGenerativeAI(reply="GEMINI_ANSWER"), tools=[])
+    assert model.invoke(["hi"]) == "GEMINI_ANSWER"
+
+
+def test_agent_without_gemini_has_no_fallback_layer(monkeypatch):
+    import agent.llm as agent_llm
+
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(llm_client, "QUERY_PROVIDER", "deepseek")
+    model = agent_llm.bind_tools_with_fallback(ChatGoogleGenerativeAI(reply="DS_ONLY"), tools=[])
+    assert type(model).__name__ == "RunnableLambda"
+    assert model.invoke(["hi"]) == "DS_ONLY"

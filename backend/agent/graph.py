@@ -21,7 +21,7 @@ from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from agent.guard import answer_is_grounded, collect_allowed_numbers
-from agent.llm import get_chat_model
+from agent.llm import bind_tools_with_fallback, get_chat_model
 
 _SYSTEM_PROMPT = """You are the financial advisory hub for Sri Lankan SMEs, speaking with the \
 owner of {company_name} -- an ongoing planning partner, not just a lookup tool. Answer in \
@@ -123,7 +123,7 @@ def _guard_node(state: MessagesState) -> dict:
 
 
 def build_agent_graph(tools: list, checkpointer, company_name: str, document_id: str | None = None):
-    model = get_chat_model().bind_tools(tools)
+    model = bind_tools_with_fallback(get_chat_model(), tools)
     prompt = _SYSTEM_PROMPT.format(company_name=company_name, today=date.today().isoformat())
     if document_id:
         prompt += _DOC_CONTEXT.format(document_id=document_id)
