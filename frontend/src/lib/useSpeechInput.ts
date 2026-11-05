@@ -25,7 +25,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** Stop listening after this long with no new words. */
 const SILENCE_MS = 4000;
 
-export type SpeechInputError = "unsupported" | "no-speech" | "not-allowed" | "network" | "failed";
+export type SpeechInputError = "unsupported" | "no-speech" | "not-allowed" | "network" | "language" | "failed";
 
 type RecognitionResult = { 0: { transcript: string } };
 type Recognition = {
@@ -84,7 +84,7 @@ export function useSpeechInput({
     recRef.current?.stop();
   }, []);
 
-  const start = useCallback((currentText: string) => {
+  const start = useCallback((currentText: string, langOverride?: string) => {
     const w = window as unknown as Record<string, unknown>;
     const Ctor = (w.SpeechRecognition || w.webkitSpeechRecognition) as RecognitionCtor | undefined;
     if (!Ctor) {
@@ -93,7 +93,7 @@ export function useSpeechInput({
     }
 
     const rec = new Ctor();
-    rec.lang = lang;
+    rec.lang = langOverride ?? lang;
     rec.interimResults = true;
     rec.continuous = false;
     recRef.current = rec;
@@ -127,7 +127,9 @@ export function useSpeechInput({
           ? "not-allowed"
           : e.error === "network"
             ? "network"
-            : "failed",
+            : e.error === "language-not-supported"
+              ? "language"
+              : "failed",
       );
     };
 

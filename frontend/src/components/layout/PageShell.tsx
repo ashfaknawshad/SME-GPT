@@ -4,120 +4,87 @@
  *
  * Provides:
  *  • Consistent background (var(--bg)) across light/dark themes
- *  • Standardised max-width + padding
- *  • Top bar: optional back button on the left, ThemeToggle + LanguageSwitcher on the right
- *  • Page title + optional subtitle below the top bar
- *  • BottomNav at the bottom
+ *  • The shared TopBar (same header as the dashboard)
+ *  • One full-width container (max 1600px) so every page lines up with the
+ *    dashboard; on desktop the app sidebar sits to its left
+ *  • Page title + subtitle, with optional page actions on the right
+ *  • BottomNav (bottom bar on phones, sidebar on desktop)
  *
- * Width variants:
- *  "narrow"   → max-w-[760px]   — Settings, Query
- *  "standard" → max-w-[960px]   — most pages (default)
- *  "wide"     → max-w-[1180px]  — Dashboard, Analysis, Manual Entry
- *  "full"     → --page-w-full   — list pages (Repository, Suppliers, Reports):
- *               spreads across wide screens in the "full" layout, 960px in
- *               "classic" (see lib/layout.ts)
+ * Width variants control only how wide the *content* may grow, never where it
+ * starts, so titles line up identically on every page:
+ *  "narrow"   → content up to 880px   — focused forms
+ *  "standard" → full width            — most pages (default)
+ *  "wide"     → full width            — kept for compatibility
  */
 
-import { useRouter } from "next/navigation";
 import MobileShell from "./MobileShell";
 import BottomNav from "./BottomNav";
-import ThemeToggle from "./ThemeToggle";
-import LanguageSwitcher from "./LanguageSwitcher";
+import TopBar from "./TopBar";
+import PageHeading from "./PageHeading";
 
-type Width = "narrow" | "standard" | "wide" | "full";
+type Width = "narrow" | "standard" | "wide";
 
-const MAX_W: Record<Width, string> = {
-  narrow:   "max-w-[760px]",
-  standard: "max-w-[960px]",
-  wide:     "max-w-[1180px]",
-  full:     "max-w-[var(--page-w-full)]",
+const CONTENT_W: Record<Width, string> = {
+  narrow:   "max-w-[880px]",
+  standard: "",
+  wide:     "",
 };
 
 interface PageShellProps {
-  /** Page title shown below the top bar */
+  /** Page title */
   title?: string;
   /** Smaller subtitle below the title */
   subtitle?: string;
-  /** If provided, shows a ← back button on the top-left */
+  /** Kept for compatibility — every PageShell page now shows "Back". */
   backLabel?: string;
-  /** Override back destination (defaults to router.back()) */
+  /** Where Back goes when there is no earlier in-app page (default /dashboard). */
   backHref?: string;
+  /** Short page name for the top bar (defaults to `title`). */
+  barTitle?: string;
   /** Layout width variant */
   width?: Width;
   /** Extra className on the <main> container */
   mainClassName?: string;
-  /** Render custom right-side content in the top bar (replaces default ThemeToggle+Lang) */
+  /** Page-level actions, shown beside the title (e.g. filters, badges) */
   topBarRight?: React.ReactNode;
-  /** Render custom left content in the top bar alongside/instead of back button */
+  /** Extra content on the left of the top bar */
   topBarLeft?: React.ReactNode;
+  /** Desktop only: the page fills exactly one screen and never scrolls as a
+   *  whole — the page's own panels scroll internally instead. */
+  fixedDesktop?: boolean;
   children: React.ReactNode;
 }
 
 export default function PageShell({
   title,
   subtitle,
-  backLabel,
   backHref,
+  barTitle,
   width = "standard",
   mainClassName = "",
   topBarRight,
   topBarLeft,
+  fixedDesktop = false,
   children,
 }: PageShellProps) {
-  const router = useRouter();
-
-  const handleBack = () => {
-    if (backHref) router.push(backHref);
-    else router.back();
-  };
-
   return (
     <MobileShell>
-      <div className="pad-nav" style={{ background: "var(--bg)" }}>
+      <div
+        className={`pad-nav ${fixedDesktop ? "lg:flex lg:h-[var(--app-height)] lg:flex-col lg:overflow-hidden" : ""}`}
+        style={{ background: "var(--bg)" }}
+      >
+        <TopBar title={barTitle ?? title} fallbackHref={backHref} leading={topBarLeft} />
+
         <main
-          className={`mx-auto w-full ${MAX_W[width]} px-4 py-6 sm:px-6 ${mainClassName}`}
+          className={`mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8 ${
+            fixedDesktop ? "lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:pb-0" : ""
+          } ${mainClassName}`}
         >
-          {/* ── Top bar ──────────────────────────────────────────────── */}
-          <div className="mb-5 flex items-center justify-between gap-3">
-            {/* Left side */}
-            <div className="flex items-center gap-3">
-              {backLabel && (
-                <button
-                  onClick={handleBack}
-                  className="flex items-center gap-1 text-[13px] font-semibold transition hover:opacity-75"
-                  style={{ color: "var(--brand-mid)" }}
-                >
-                  <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-                  Back
-                </button>
-              )}
-              {topBarLeft}
-            </div>
-
-            {/* Right side */}
-            <div className="flex items-center gap-2">
-              {topBarRight ?? (
-                <>
-                  <ThemeToggle />
-                  <LanguageSwitcher />
-                </>
-              )}
-            </div>
-          </div>
-
           {/* ── Page heading ─────────────────────────────────────────── */}
-          {title && (
-            <h1 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[28px]">
-              {title}
-            </h1>
-          )}
-          {subtitle && (
-            <p className="mt-1 text-[13px] text-[var(--text-2)]">{subtitle}</p>
-          )}
-          {(title || subtitle) && <div className="mt-5" />}
+          <PageHeading title={title} subtitle={subtitle} actions={topBarRight} />
 
           {/* ── Page content ─────────────────────────────────────────── */}
-          {children}
+          <div className={`${CONTENT_W[width]} ${fixedDesktop ? "lg:min-h-0 lg:flex-1" : ""}`}>{children}</div>
         </main>
 
         <BottomNav />

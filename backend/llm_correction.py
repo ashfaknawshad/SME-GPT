@@ -177,9 +177,50 @@ def _sinhala_ratio(text: str) -> float:
     return sum(1 for c in chars if "඀" <= c <= "෿") / len(chars)
 
 
+_PLACEHOLDER_RE = re.compile(r"__TOKEN_\d+__")
+
+
+def has_correctable_text(masked_text: str) -> bool:
+    """True if anything besides masked tokens, digits and punctuation is left.
+
+    When masking hides everything (e.g. an all-caps "LUNCH" becomes
+    "__TOKEN_0__"), the LLM gets only a placeholder and answers with a chat
+    message ("I don't see any document text...") instead of corrected text.
+    There is nothing to correct in that case, so callers skip the LLM.
+    """
+    if not isinstance(masked_text, str):
+        return False
+    remainder = _PLACEHOLDER_RE.sub(" ", masked_text)
+    return bool(re.search(r"[A-Za-z඀-෿]", remainder))
+
+
+# Phrases that mean the model replied *about* the task instead of doing it.
+_META_REPLY_MARKERS = (
+    "i don't see", "i do not see", "i can't see", "i cannot see",
+    "please paste", "please provide", "please share", "please send",
+    "paste the", "provide the ocr", "the ocr text", "ocr content",
+    "placeholder", "i'll return", "i will return", "i'll correct", "i will correct",
+    "no text to correct", "nothing to correct", "no document text",
+    "i'm sorry", "i am sorry", "sorry,", "as an ai", "could you",
+    "it seems", "it looks like", "there is no text", "there's no text",
+)
+
+
+def looks_like_llm_meta_reply(original_text: str, corrected_text: str) -> bool:
+    """True if the reply is commentary/a request for input, not corrected text."""
+    if not isinstance(corrected_text, str):
+        return False
+    lower = corrected_text.strip().lower().replace("’", "'")
+    original_lower = (original_text or "").lower()
+    return any(m in lower and m not in original_lower for m in _META_REPLY_MARKERS)
+
+
 def looks_like_bad_rewrite(original_text: str, corrected_text: str) -> bool:
     if not isinstance(original_text, str) or not isinstance(corrected_text, str):
         return False
+
+    if looks_like_llm_meta_reply(original_text, corrected_text):
+        return True
 
     original_lines = [ln for ln in original_text.splitlines() if ln.strip()]
     corrected_lines = [ln for ln in corrected_text.splitlines() if ln.strip()]
@@ -444,7 +485,12 @@ def llm_refine_text(raw_text: str) -> str:
     dictionary_fixed = dictionary_correct_text(cleaned)
     masked, placeholders = preserve_sensitive_tokens(dictionary_fixed)
 
-    prompt = f"""Fix OCR spelling errors in this Sri Lankan financial document text. Return ONLY the corrected text.
+    # Nothing but masked tokens/numbers left -> the LLM has nothing to fix and
+    # would only reply with commentary. Keep the text as-is.
+    if not has_correctable_text(masked):
+        return dictionary_fixed
+
+    prompt =f"""Fix OCR spelling errors in this Sri Lankan financial document text. Return ONLY the corrected text.
 
 STRICT RULES:
 1. Fix ONLY clear OCR typos in common English words:

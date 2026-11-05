@@ -36,9 +36,42 @@
   --info:           #1d4ed8;
   --info-tint:      #eff6ff;
   --info-border:    #bfdbfe;
+
+  /* Desktop side navigation. Light mode paints it in the brand navy so the
+     app reads as a product, not a stretched phone screen; dark mode drops back
+     to the neutral surface so the brand stays an accent there too. */
+  --nav-bg:         linear-gradient(180deg, #1a3560 0%, #142a4d 100%);
+  --nav-fg:         #ffffff;
+  --nav-fg-muted:   rgba(255, 255, 255, 0.66);
+  --nav-section:    rgba(255, 255, 255, 0.40);
+  --nav-hover:      rgba(255, 255, 255, 0.07);
+  --nav-active-bg:  rgba(255, 255, 255, 0.13);
+  --nav-active-fg:  #ffffff;
+  --nav-accent:     #7fb0ff;
+  --nav-border:     rgba(255, 255, 255, 0.09);
+
+  /* Hero banner gradient (dashboard). */
+  --hero-from:      #1a3560;
+  --hero-to:        #2252b5;
+  --card-shadow:    0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px rgba(15, 23, 42, 0.05);
+  --card-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.05), 0 12px 28px rgba(15, 23, 42, 0.10);
 }
 
 [data-theme="dark"] {
+  --nav-bg:         var(--surface);
+  --nav-fg:         var(--text-1);
+  --nav-fg-muted:   var(--text-2);
+  --nav-section:    var(--text-3);
+  --nav-hover:      var(--surface-2);
+  --nav-active-bg:  var(--brand-tint);
+  --nav-active-fg:  var(--brand-mid);
+  --nav-accent:     var(--brand-mid);
+  --nav-border:     var(--border);
+  --hero-from:      #1d3766;
+  --hero-to:        #2f5bb0;
+  --card-shadow:    0 1px 2px rgba(0, 0, 0, 0.25);
+  --card-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.35);
+
   /* Neutral charcoal base (not blue-tinted black) so the brand colour reads as
      an accent instead of flooding the whole UI. Surfaces step up in lightness
      for a clear, calm elevation hierarchy. */
@@ -107,13 +140,30 @@
 
   /* Fallback for engines without svh (pre-2022 Safari/Chrome): plain vh still
      yields a usable, if slightly tall, shell rather than a broken one. */
-  --app-height: calc(100vh - var(--keyboard-inset));
+  /* Text size (Settings → Preferences → Text size). Written by lib/textSize
+     and by the pre-paint script in layout.tsx. */
+  --ui-scale: 1;
+
+  --app-height-raw: calc(100vh - var(--keyboard-inset));
+  /* App content is zoomed by --ui-scale, and Chrome scales viewport units
+     inside zoomed content too (100svh at 1.2× renders 1.2 screens tall). So
+     everything *inside* the app uses this pre-divided value, which renders as
+     exactly one screen at any text size. The unzoomed <body> uses the raw one. */
+  --app-height: calc(var(--app-height-raw) / var(--ui-scale));
 }
 
 @supports (height: 100svh) {
   :root {
-    --app-height: calc(100svh - var(--keyboard-inset));
+    --app-height-raw: calc(100svh - var(--keyboard-inset));
   }
+}
+
+/* Scale the whole interface proportionally — like browser zoom, but only for
+   this app. The UI uses fixed px font sizes, so scaling the root font-size
+   would only resize part of it. The viewport probe is left out so keyboard
+   detection keeps comparing real pixels with real pixels. */
+body > *:not(#__svh_probe) {
+  zoom: var(--ui-scale);
 }
 
 /* While the keyboard is up the bottom nav slides away (native apps do the
@@ -162,8 +212,9 @@ body {
   /* Was 100dvh — the *large* viewport, i.e. taller than what is on screen while
      the mobile toolbars are up. That left every page with a sliver of document
      scroll, which is what let iOS drift the whole page when an input near the
-     bottom took focus. --app-height is the height that is actually usable. */
-  min-height: var(--app-height);
+     bottom took focus. --app-height is the height that is actually usable.
+     <body> itself isn't zoomed, so it takes the raw (unscaled) height. */
+  min-height: var(--app-height-raw);
   background: var(--bg);
   color: var(--text-1);
   -webkit-tap-highlight-color: transparent;
@@ -261,7 +312,7 @@ body {
    :has(); engines without it simply keep the previous (min-height-limited)
    behaviour rather than breaking. */
 body:has(.app-shell) {
-  height: var(--app-height);
+  height: var(--app-height-raw);
   overflow: hidden;
 }
 
@@ -289,6 +340,80 @@ body:has(.app-shell) {
    Collapses to just breathing room while the keyboard is up. */
 .pad-nav {
   padding-bottom: calc(var(--bottom-nav-h) + 1.5rem);
+}
+
+/* ─── Desktop side navigation ────────────────────────────────────
+   From 1024px up the bottom tab bar is replaced by a fixed left sidebar
+   (rendered by BottomNav). Pages don't need to know: anything that renders the
+   nav is pushed right by exactly the sidebar's width here. The chat page
+   (.app-shell) already has its own thread list, so it gets a slim icon rail
+   instead of the full sidebar. Phones and tablets are untouched. */
+:root {
+  --side-nav-w: 0px;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --side-nav-w: 256px;
+    /* The bottom bar is display:none here, so nothing must reserve room for it
+       even before BottomNav's measurement lands. */
+    --bottom-nav-h: 0px;
+  }
+
+  html:has(.app-nav--rail) {
+    --side-nav-w: 76px;
+  }
+
+  body:has(.app-nav) .app-page:not(:has(.app-shell)),
+  body:has(.app-nav) .app-shell {
+    padding-left: calc(var(--safe-left) + var(--side-nav-w));
+  }
+}
+
+/* Shared elevated card look used by the redesigned pages. */
+.ui-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  box-shadow: var(--card-shadow);
+}
+
+.ui-card-hover {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.ui-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--card-shadow-hover);
+  border-color: color-mix(in srgb, var(--brand-mid) 30%, var(--border));
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  /* `none`, not translateY(0): a leftover transform would make this element
+     the containing block for position:fixed children (e.g. modals). */
+  to   { opacity: 1; transform: none; }
+}
+
+.rise-in {
+  animation: rise-in 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Columns inside the fixed Settings page. Laid out to fit one screen, so no
+   scrollbar is ever drawn; on an unusually short window the wheel/touch can
+   still reach anything that didn't fit, instead of it being cut off. */
+.settings-panel {
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+
+.settings-panel::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-in { animation: none; }
+  .ui-card-hover:hover { transform: none; }
 }
 
 .safe-top    { padding-top: var(--safe-top); }
@@ -473,84 +598,34 @@ html[data-nav-dir] .app-shell {
   }
 }
 
-/* ─── Page layout: "full" (default) vs "classic" ─────────────────
-   <html data-layout> is set before first paint from the user's choice
-   (Settings → Display) or NEXT_PUBLIC_DEFAULT_LAYOUT — see lib/layout.ts.
-   "full" spreads list pages and the dashboard across wide screens;
-   "classic" is the original centred, single-column design, kept here as a
-   mode so it survives later changes. Below 1024px both modes are identical. */
-:root {
-  --page-w-full: 1536px;
-}
-
-html[data-layout="classic"] {
-  --page-w-full: 960px;
-}
-
-/* Dashboard: on phones and in classic, one column in the original order (the
-   order-* classes); in full from 1024px, a main column plus a side column. */
-.dash-layout {
-  display: flex;
-  flex-direction: column;
-}
-
-.dash-col {
-  display: contents;
-}
-
-/* Card lists (recent documents, repository, suppliers): one per row, or two
-   side by side on wide screens in full layout. */
+/* ─── Wide-screen lists ──────────────────────────────────────────
+   Card lists (repository, suppliers) and the payables / receivables report
+   halves sit side by side from 1280px; below that they stack. */
 .card-list {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
 }
 
-@media (min-width: 1024px) {
-  html:not([data-layout="classic"]) .dash-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
-    column-gap: 1.5rem;
-    align-items: start;
-    /* Stands in for the first sections' top margins, reset below. */
-    margin-top: 1.5rem;
-  }
-
-  html:not([data-layout="classic"]) .dash-col {
-    display: flex;
-    flex-direction: column;
-  }
-
-  /* Each column lists its sections in its own order; the top ones line up. */
-  html:not([data-layout="classic"]) .dash-col > * {
-    order: 0;
-  }
-
-  html:not([data-layout="classic"]) .dash-col > :first-child {
-    margin-top: 0;
-  }
-}
-
 @media (min-width: 1280px) {
-  html:not([data-layout="classic"]) .card-list {
+  .card-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
 
-  /* Report halves (payables / receivables) side by side. */
-  html:not([data-layout="classic"]) .report-halves {
+  .report-halves {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 1.5rem;
     align-items: start;
   }
 
-  html:not([data-layout="classic"]) .report-halves > * {
+  .report-halves > * {
     margin-block: 0;
   }
 
-  html:not([data-layout="classic"]) .report-halves > .report-divider {
+  .report-halves > .report-divider {
     display: none;
   }
 }

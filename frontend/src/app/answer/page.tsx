@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
+import TopBar from "@/components/layout/TopBar";
 import DerivationTrace from "@/components/ui/DerivationTrace";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { isHiddenMetric, metricLabel, metricValue, humanizeFlow } from "@/lib/humanize";
@@ -187,26 +187,14 @@ export default function AnswerPage() {
     router.push("/query");
   };
 
-  const handleBack = () => {
-    if (result?.opened_from_history) {
-      router.push("/profile/query-history");
-      return;
-    }
-    router.push("/query");
-  };
 
   if (!result) {
     return (
       <MobileShell>
         <div className="pad-nav bg-[var(--bg)]">
-          <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
+          <TopBar title={t.businessInsight} fallbackHref="/query" />
+          <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => router.push("/query")}
-                className="text-[14px] font-medium text-[var(--brand-mid)]"
-              >
-                ← {t.back}
-              </button>
               <button
                 onClick={handleStartNewChat}
                 className="rounded-xl bg-[var(--brand)] px-4 py-2 text-[13px] font-bold text-white"
@@ -228,17 +216,13 @@ export default function AnswerPage() {
   return (
     <MobileShell>
       <div className="pad-nav bg-[var(--bg)]">
-        <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <button
-              onClick={handleBack}
-              className="text-[14px] font-medium text-[var(--brand-mid)]"
-            >
-              ← {t.back}
-            </button>
-
+        <TopBar
+          title={t.businessInsight}
+          fallbackHref={result?.opened_from_history ? "/profile/query-history" : "/query"}
+        />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
             <div className="flex items-center gap-2">
-              <LanguageSwitcher />
               <button
                 onClick={handleStartNewChat}
                 className="rounded-xl bg-[var(--brand)] px-4 py-2 text-[13px] font-bold text-white"

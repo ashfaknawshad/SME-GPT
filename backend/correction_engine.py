@@ -37,6 +37,33 @@ def hybrid_correct_text(text: str):
     }
 
 
+def _amount_or_none(value):
+    """Parse a money/quantity value; blank, unreadable or 0 means 'missing'."""
+    number = safe_float(value, default=None)
+    if number is None or number == 0:
+        return None
+    return number
+
+
+def _complete_item_amounts(quantity, unit_price, line_total):
+    """Fill in whichever of quantity / unit_price / line_total is missing from
+    the others. Handwritten receipts often show one amount per line
+    ("Glue ... 110") with no qty or unit price: that is 1 x 110 = 110."""
+    if quantity is None:
+        if unit_price is not None and line_total is not None:
+            quantity = round(line_total / unit_price, 2)
+        elif unit_price is not None or line_total is not None:
+            quantity = 1.0
+
+    if unit_price is None and line_total is not None and quantity:
+        unit_price = round(line_total / quantity, 2)
+
+    if line_total is None and unit_price is not None and quantity:
+        line_total = round(quantity * unit_price, 2)
+
+    return quantity, unit_price, line_total
+
+
 def normalize_items(items):
     if not isinstance(items, list):
         return []
@@ -51,9 +78,18 @@ def normalize_items(items):
         description = re.sub(r"^\s*Corrected OCR text:\s*", "", description, flags=re.IGNORECASE)
         description = re.sub(r"^\s*Corrected text:\s*", "", description, flags=re.IGNORECASE)
         description = re.sub(r"^\s*OCR text:\s*", "", description, flags=re.IGNORECASE)
-        quantity = safe_float(item.get("quantity", 0))
-        unit_price = safe_float(item.get("unit_price", 0))
-        line_total = safe_float(item.get("line_total", 0))
+        # Blank / unreadable values stay None ("missing"), never 0 — a 0 here used
+        # to make the validator compute qty*price = 0 and wipe the real total.
+        quantity = _amount_or_none(item.get("quantity"))
+        unit_price = _amount_or_none(item.get("unit_price"))
+        line_total = _amount_or_none(item.get("line_total"))
+        quantity, unit_price, line_total = _complete_item_amounts(quantity, unit_price, line_total)
+
+        # The line-total column was copied into unit_price (e.g. qty 2, unit 440,
+        # total 440 on a receipt that printed 220 / 440): derive the real unit price.
+        if (quantity and line_total and unit_price and abs(quantity - 1) > 1e-9
+                and abs(unit_price - line_total) <= 0.01):
+            unit_price = round(line_total / quantity, 2)
 
         corrected_desc_result = hybrid_correct_text(description)
         corrected_description = corrected_desc_result["final_text"]
@@ -63,22 +99,11 @@ def normalize_items(items):
         corrected_description = re.sub(r"^\s*OCR text:\s*", "", corrected_description, flags=re.IGNORECASE)
         corrected_description = corrected_description.strip()
 
-        # The line-total column was copied into unit_price (e.g. qty 2, unit 440,
-        # total 440 on a receipt that printed 220 / 440): derive the real unit price.
-        if (quantity > 0 and abs(quantity - 1) > 1e-9 and line_total > 0
-                and abs(unit_price - line_total) <= 0.01):
-            unit_price = round(line_total / quantity, 2)
-
-        if quantity > 0 and unit_price > 0 and line_total == 0:
-            computed_line_total = round(quantity * unit_price, 2)
-        else:
-            computed_line_total = round(line_total, 2)
-
         normalized.append({
             "description": corrected_description,
-            "quantity": quantity,
-            "unit_price": unit_price,
-            "line_total": computed_line_total,
+            "quantity": quantity if quantity is not None else 0.0,
+            "unit_price": unit_price if unit_price is not None else 0.0,
+            "line_total": round(line_total, 2) if line_total is not None else 0.0,
             "correction_confidence": corrected_desc_result["confidence_score"]
         })
 
@@ -107,13 +132,23 @@ def correct_extracted_fields(extracted_json: dict):
     existing_final_total = safe_float(data.get("final_total_amount", 0))
     existing_payable_amount = safe_float(data.get("payable_amount", 0))
 
+    # Record which totals were filled in here rather than read off the
+    # document, so the arithmetic validator only checks the items against
+    # totals actually printed (comparing the items with a number built from
+    # those same items always "matched" and hid real mismatches).
+    derived_totals = []
     if recalculated_total > 0:
         if existing_final_total == 0:
             data["final_total_amount"] = recalculated_total
+            derived_totals.append("final_total_amount")
         if existing_payable_amount == 0:
-            data["payable_amount"] = recalculated_total
+            # Payable is the document total (same rule dataset_manager applies
+            # on save), falling back to the items sum when no total is printed.
+            data["payable_amount"] = existing_final_total or recalculated_total
+            derived_totals.append("payable_amount")
 
         data["recommended_total_from_items"] = recalculated_total
+    data["derived_totals"] = derived_totals
     data["correction_status"] = "hybrid_text_and_item_normalization"
     data["correction_confidence"] = 0.92
 

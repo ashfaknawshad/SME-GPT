@@ -259,7 +259,7 @@ export default function PayablesPage() {
       subtitle={lang === "si"
         ? "PO සහ ඉන්වොයිස් දෙගුණ ගණනය නොකර නිවැරදි ශේෂය"
         : "True outstanding balances — POs and Invoices are kept separate to avoid double-counting the same transaction."}
-      width="full"
+      width="standard"
     >
       {loading ? (
         <ReportSkeleton />

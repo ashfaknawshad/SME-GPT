@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import PwaRegister from "@/components/PwaRegister";
 import ViewportManager from "@/components/layout/ViewportManager";
+import NavTracker from "@/components/layout/NavTracker";
 import ConfirmHost from "@/components/ui/ConfirmHost";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -63,10 +64,10 @@ export default function RootLayout({
             __html: `try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}`,
           }}
         />
-        {/* Apply saved page layout ("full" / "classic", see lib/layout.ts) before first paint */}
+        {/* Apply saved text size before first paint (values mirror lib/textSize.ts) */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var l=${JSON.stringify(process.env.NEXT_PUBLIC_DEFAULT_LAYOUT === "classic" ? "classic" : "full")};try{var s=localStorage.getItem('layout');if(s==='full'||s==='classic')l=s;}catch(e){}document.documentElement.setAttribute('data-layout',l);})();`,
+            __html: `try{var z={compact:0.9,large:1.1,xlarge:1.2}[localStorage.getItem('text-size')];if(z){document.documentElement.style.setProperty('--ui-scale',String(z));}}catch(e){}`,
           }}
         />
         <link
@@ -77,6 +78,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <PwaRegister />
         <ViewportManager />
+        <NavTracker />
         {children}
         <ConfirmHost />
       </body>

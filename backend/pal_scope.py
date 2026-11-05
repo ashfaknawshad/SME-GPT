@@ -25,11 +25,12 @@ import pandas as pd
 import data_tools as dt
 
 
-def resolve_scope(company_name: str, user_id: str) -> tuple[pd.DataFrame, str | None]:
+def resolve_scope(company_name: str, user_id: str, user_df: pd.DataFrame | None = None) -> tuple[pd.DataFrame, str | None]:
     """Tenant + company scoping. Returns (scoped_documents_df, error_message)
-    -- error_message is None when scoping succeeded."""
-    df = dt.load_dataset(user_id=user_id)
-    user_df = dt.filter_user_context(df, user_id=user_id)
+    -- error_message is None when scoping succeeded. `user_df` lets a caller
+    that already loaded the tenant's documents skip a second database read."""
+    if user_df is None:
+        user_df = dt.filter_user_context(dt.load_dataset(user_id=user_id), user_id=user_id)
     if user_df.empty:
         return user_df, "No saved records found for the current user."
 
@@ -49,22 +50,20 @@ def resolve_scope_with_c4(company_name: str, user_id: str) -> tuple[pd.DataFrame
     same vendor entity).  Degrades silently to the SQL-only path if the
     entity index is unreachable.
     """
-    df, err = resolve_scope(company_name, user_id)
+    # Load the tenant's documents once and reuse them for both the company
+    # scope and the graph expansion (this used to read the database twice).
+    user_docs = dt.filter_user_context(dt.load_dataset(user_id=user_id), user_id=user_id)
+    df, err = resolve_scope(company_name, user_id, user_df=user_docs)
     if err or df.empty:
         return df, err
 
     try:
-        from entity_index import expand_related_docs
+        from entity_index import expand_related_docs_many
         doc_ids = list(df["document_id"].dropna().astype(str).unique())
-        expanded: set[str] = set(doc_ids)
-
-        for did in doc_ids:
-            for related in expand_related_docs(did, user_id):
-                expanded.add(related)
+        # One batched query for the whole set (was 3+ queries per document).
+        expanded: set[str] = set(doc_ids) | expand_related_docs_many(doc_ids, user_id)
 
         if len(expanded) > len(doc_ids):
-            all_docs = dt.load_dataset(user_id=user_id)
-            user_docs = dt.filter_user_context(all_docs, user_id=user_id)
             df = user_docs[user_docs["document_id"].astype(str).isin(expanded)].copy()
     except Exception:
         pass  # degrade to SQL-only scope if entity index is unavailable
@@ -72,7 +71,8 @@ def resolve_scope_with_c4(company_name: str, user_id: str) -> tuple[pd.DataFrame
     return df, None
 
 
-def resolve_scope_with_rag(question: str, company_name: str, user_id: str) -> tuple[pd.DataFrame, str | None]:
+def resolve_scope_with_rag(question: str, company_name: str, user_id: str,
+                           sql_scope_fn=None) -> tuple[pd.DataFrame, str | None]:
     """Iteration 15 — Hybrid RAG + SQL scope resolution (FR-19).
 
     Calls retrieve_top_k() for semantic relevance, unions result doc IDs
@@ -87,7 +87,9 @@ def resolve_scope_with_rag(question: str, company_name: str, user_id: str) -> tu
     except Exception:
         pass
 
-    sql_df, sql_err = resolve_scope_with_c4(company_name, user_id)
+    # A caller that caches the C4 scope for this request passes a provider for
+    # it (called lazily, only here), so the scope isn't resolved twice.
+    sql_df, sql_err = sql_scope_fn() if sql_scope_fn else resolve_scope_with_c4(company_name, user_id)
 
     if rag_doc_ids and not sql_df.empty:
         try:

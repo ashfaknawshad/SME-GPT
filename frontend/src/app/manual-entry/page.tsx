@@ -360,7 +360,7 @@ export default function ManualEntryPage() {
     const body = {
       document_type: docType,
       order_id:      orderRef.trim() || undefined,
-      po_reference:  docType === "dn" || docType === "invoice" ? poRef.trim() || undefined : undefined,
+      po_ref:        docType === "dn" || docType === "invoice" ? poRef.trim() || undefined : undefined,
       date:          date,
       supplier_name: supplier.trim(),
       currency:      currency,

@@ -37,6 +37,18 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
     to share across users."""
     evidence: list[dict] = []
 
+    # One chat turn often calls several tools (and the same tool twice); the
+    # tenant's documents can't change mid-turn, so resolve the scope once and
+    # hand each tool its own copy. build_tools() runs once per request, so
+    # this cache never outlives the turn.
+    _scope: dict = {}
+
+    def scope_c4():
+        if "c4" not in _scope:
+            _scope["c4"] = resolve_scope_with_c4(company_name, user_id)
+        df, err = _scope["c4"]
+        return df.copy(), err
+
     @tool
     def aggregate_financials(
         measure_field: str,
@@ -99,7 +111,7 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         pre-scaled total and the factor used. If the arguments are invalid you
         get back an `error` explaining why -- fix the arguments and call again.
         """
-        df, err = resolve_scope_with_c4(company_name, user_id)
+        df, err = scope_c4()
         if err or df.empty:
             return {"error": err or "No documents found for this company."}
 
@@ -190,7 +202,7 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         Returns a dict with `documents` (list of matches: id, type, date,
         supplier, amount, currency, status fields) and `count`.
         """
-        df, err = resolve_scope_with_rag(query, company_name, user_id)
+        df, err = resolve_scope_with_rag(query, company_name, user_id, sql_scope_fn=scope_c4)
         if err or df.empty:
             return {"documents": [], "count": 0, "note": err or "No documents found."}
 
@@ -245,7 +257,7 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         Args:
           document_id: the document ID to look up (case-insensitive).
         """
-        df, err = resolve_scope_with_c4(company_name, user_id)
+        df, err = scope_c4()
         if err or df.empty:
             return {"error": err or "No documents found for this company."}
 
@@ -257,47 +269,186 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         evidence.extend(ev)
         return ev[0]
 
+    # ── linked orders (PO -> DN -> Invoice -> Receipt; document_links.py) ──
+    _orders_cache: dict = {}
+
+    def _order_views():
+        """All linked orders for this tenant, computed once per turn."""
+        if "views" not in _orders_cache:
+            try:
+                from order_reconciliation import tenant_order_views
+                _orders_cache["views"] = tenant_order_views(user_id)[0]
+            except Exception:
+                _orders_cache["views"] = []  # degrade: linking unavailable
+        return _orders_cache["views"]
+
+    def _chain_evidence(doc_ids, why: str) -> None:
+        df, err = scope_c4()
+        if err or df.empty:
+            return
+        sub = df[df["document_id"].astype(str).isin(set(doc_ids))]
+        if not sub.empty:
+            evidence.extend(dt.build_evidence(sub, why))
+
+    def _compact(view: dict) -> dict:
+        return {
+            "order": view["order_id"],
+            "status": view["order_status"],
+            "delivery": view["delivery_stage"],
+            "invoicing": view["invoiced_stage"],
+            "payment": view["payment_stage"],
+            "documents": [{"id": d["document_id"], "type": d["document_type"], "number": d.get("number") or "",
+                           "date": d.get("date"), "amount": d.get("amount")} for d in view["documents"]],
+            "lines": [{"item": l["description"], "ordered": l["ordered"], "delivered": l["delivered"],
+                       "invoiced": l["invoiced"], "po_unit_price": l["po_unit_price"],
+                       "invoice_unit_price": l["invoice_unit_price"], "delivery_status": l["delivery_status"]}
+                      for l in view["lines"]],
+            "invoices": [{"id": i["document_id"], "number": i["number"], "total": i["total"], "paid": i["paid"],
+                          "balance": i["balance"], "status": i["status"]} for i in view["invoices"]],
+            "totals": view["totals"],
+            "issues": [i["message_en"] for i in view["issues"]],
+        }
+
     @tool
-    def find_discrepancies(order_id: Optional[str] = None) -> dict:
-        """Compare line-item prices between an invoice and its linked purchase order
-        to detect billing discrepancies (invoice charging more/less than the PO
-        agreed). Use ONLY when the user asks about discrepancies, mismatches,
-        overcharging, or invoice-vs-PO differences -- never volunteer this on
-        unrelated questions.
+    def get_order_chain(reference: str) -> dict:
+        """Look up the linked order -- purchase order -> delivery note(s) ->
+        invoice(s) -> receipt(s) -- that a document belongs to: line-by-line
+        ordered / delivered / invoiced quantities, PO vs invoice unit prices,
+        what each invoice has been paid and still owes, and any issues
+        (partial delivery, over-billing, price differences, unpaid balances).
+        Use for questions like "has PO8 been fully delivered?", "how many bags
+        are still to come?", "was the invoice for PO-2026-041 paid?", "what's
+        left to pay on this order?".
 
         Args:
-          order_id: optional order ID linking the documents (e.g. "PO-2026-501").
-            When omitted, every order that has both an invoice and a PO is checked.
-
-        Returns {"discrepancies": [...], "orders_checked": N}. Each discrepancy has
-        description, invoice_price, po_price, diff_pct, and is_discrepancy (True
-        when the gap exceeds 2%).
+          reference: a document ID (e.g. "PO8", "IN21") or any printed reference
+            number (e.g. "PO-2026-041", "INV-778") -- formatting is ignored.
         """
-        df, err = resolve_scope_with_c4(company_name, user_id)
-        if err or df.empty:
-            return {"error": err or "No documents found for this company."}
+        from order_reconciliation import _chain_inputs, build_chain_view
+        from references import ref_key
 
-        # Link documents the same way order reconciliation does: a PO by its own
-        # number, an invoice by the PO number it references (order_key-normalised).
-        from order_reconciliation import link_key, order_key
+        records, prepared = _chain_inputs(user_id)
+        ref = reference.strip()
+        target = next((d for d in prepared if d.lower() == ref.lower()), None)
+        if not target:
+            key = ref_key(ref)
+            if key:
+                order = {"po": 0, "invoice": 1, "dn": 2, "receipt": 3}
+                hits = [p for p in prepared.values()
+                        if key in (p["own_key"], p["order_key"], ref_key(p["refs"].get("po_ref")))]
+                hits.sort(key=lambda p: order.get(p["type"], 9))
+                target = hits[0]["document_id"] if hits else None
+        if not target:
+            return {"error": f"No document or reference number matching '{reference}'."}
 
-        keys = df.apply(lambda row: link_key(row.to_dict()), axis=1)
-        if order_id:
-            df = df[keys == order_key(order_id)]
-            if df.empty:
-                return {"error": f"No documents found with order ID '{order_id}'."}
-            keys = keys[df.index]
+        view = build_chain_view(target, user_id, records=records)
+        if not view or len(view["documents"]) < 2:
+            return {"document": target, "linked": False,
+                    "note": "This document is not linked to a purchase order, delivery note, invoice or receipt yet."}
+        _chain_evidence([d["document_id"] for d in view["documents"]], f"Linked order {view['order_id']}.")
+        out = _compact(view)
+        out["pending_link_suggestions"] = len(view.get("suggestions") or [])
+        return out
 
-        # Group by order: a discrepancy is only meaningful between an invoice
-        # and the PO for the SAME order -- comparing across unrelated orders
-        # would manufacture false positives.
+    @tool
+    def list_order_issues(kind: Optional[str] = None) -> dict:
+        """List the linked orders (PO -> delivery -> invoice -> receipt) that
+        need attention, across the whole business. Use for questions like "are
+        any deliveries incomplete?", "is any supplier over-billing me?", "which
+        invoices still have a balance?", "anything delivered but not invoiced?".
+
+        Args:
+          kind: optional filter -- one of partial_delivery, over_delivery,
+            over_billed, price_mismatch, item_not_on_po, unpaid_balance,
+            overpaid, delivered_not_invoiced. Omit for every kind.
+        """
+        views = _order_views()
+        found = []
+        for v in views:
+            issues = [i for i in v["issues"] if not kind or i["code"] == kind]
+            if not issues:
+                continue
+            found.append({
+                "order": v["order_id"], "status": v["order_status"],
+                "documents": [{"id": d["document_id"], "type": d["document_type"], "number": d.get("number") or ""}
+                              for d in v["documents"]],
+                "issues": [{"kind": i["code"], "message": i["message_en"], **i.get("data", {})} for i in issues],
+                "totals": v["totals"],
+            })
+            _chain_evidence(v["document_ids"], f"Order {v['order_id']} needs attention.")
+        return {"orders_checked": len(views), "orders_with_issues": found}
+
+    @tool
+    def find_discrepancies(order_id: Optional[str] = None) -> dict:
+        """Compare line-item prices between an invoice and the purchase order it
+        belongs to, to detect billing discrepancies (invoice charging more/less
+        than the PO agreed). Use ONLY when the user asks about discrepancies,
+        mismatches, overcharging, or invoice-vs-PO differences -- never
+        volunteer this on unrelated questions.
+
+        Args:
+          order_id: optional order / PO number (e.g. "PO-2026-501") or document
+            ID. When omitted, every order that has both an invoice and a PO is
+            checked.
+
+        Returns {"discrepancies": [...], "orders_checked": N}. Each discrepancy
+        has description, invoice_price, po_price, diff_pct, and is_discrepancy
+        (True when the prices meaningfully differ).
+        """
+        from references import ref_key
+
         all_found: list[dict] = []
         orders_checked = 0
-        for key, group in df.groupby(keys):
-            if not key:
+        covered: set[str] = set()
+        want = ref_key(order_id) if order_id else ""
+
+        # 1) Linked orders (the reliable source: documents are connected by
+        #    reference numbers / counterparty / items, not just a shared string).
+        for v in _order_views():
+            if not (v["counts"]["po"] and v["counts"]["invoice"]):
                 continue
-            po_rows = group[group["document_type"].astype(str).str.lower() == "po"]
-            oid = str(po_rows["order_id"].iloc[0]) if not po_rows.empty else key
+            if order_id:
+                keys = {ref_key(v["order_id"])} | {ref_key(d.get("number")) for d in v["documents"]}
+                ids = {d["document_id"].lower() for d in v["documents"]}
+                if want not in keys and order_id.strip().lower() not in ids:
+                    continue
+            orders_checked += 1
+            covered |= set(v["document_ids"])
+            inv_numbers = ", ".join(d.get("number") or d["document_id"] for d in v["documents"] if d["document_type"] == "invoice")
+            hit = False
+            for line in v["lines"]:
+                po_p, inv_p = line["po_unit_price"], line["invoice_unit_price"]
+                if not po_p or not inv_p:
+                    continue
+                diff_pct = round((inv_p - po_p) / po_p * 100, 2)
+                is_disc = abs(inv_p - po_p) > max(0.5, 0.005 * po_p)
+                hit = hit or is_disc
+                all_found.append({"order_id": v["order_id"], "invoice": inv_numbers, "description": line["description"],
+                                  "invoice_price": inv_p, "po_price": po_p, "diff_pct": diff_pct,
+                                  "is_discrepancy": is_disc})
+            if hit:
+                _chain_evidence(v["document_ids"], f"Invoice-vs-PO price check for order {v['order_id']}.")
+
+        # 2) Legacy: documents sharing an order_id string that aren't linked yet.
+        df, err = scope_c4()
+        if err or df.empty:
+            if orders_checked:
+                return {"discrepancies": all_found, "orders_checked": orders_checked}
+            return {"error": err or "No documents found for this company."}
+
+        if order_id:
+            df = df[df["order_id"].astype(str).str.lower() == order_id.strip().lower()]
+            if df.empty and not orders_checked:
+                return {"error": f"No documents found with order ID '{order_id}'."}
+
+        # A discrepancy is only meaningful between an invoice and the PO for the
+        # SAME order -- comparing across unrelated orders would manufacture false
+        # positives.
+        for oid, group in df.groupby(df["order_id"].astype(str)):
+            if not oid or oid.upper() in ("", "NULL", "NONE"):
+                continue
+            if set(group["document_id"].astype(str)) <= covered:
+                continue  # already checked as a linked order
             types = set(group["document_type"].astype(str).str.lower())
             if not ({"invoice", "po"} <= types):
                 continue
@@ -312,4 +463,5 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
 
         return {"discrepancies": all_found, "orders_checked": orders_checked}
 
-    return [aggregate_financials, search_documents, get_document_status, find_discrepancies], evidence
+    return [aggregate_financials, search_documents, get_document_status, get_order_chain,
+            list_order_issues, find_discrepancies], evidence

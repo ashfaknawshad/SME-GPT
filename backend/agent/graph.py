@@ -21,16 +21,37 @@ from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from agent.guard import answer_is_grounded, collect_allowed_numbers
+from agent.language import (
+    GUARD_FALLBACK,
+    GUARD_FALLBACK_NO_DATA,
+    detect_reply_language,
+    reply_language_instruction,
+)
 from agent.llm import get_chat_model
 
 _SYSTEM_PROMPT = """You are the financial advisory hub for Sri Lankan SMEs, speaking with the \
-owner of {company_name} -- an ongoing planning partner, not just a lookup tool. Answer in \
-whichever language (English, Sinhala, or a natural mix) the user writes in.
+owner of {company_name} -- an ongoing planning partner, not just a lookup tool. Always reply in \
+the language of the user's LATEST message (English, Sinhala script, or Singlish = Sinhala typed \
+in English letters), regardless of the app's language setting or earlier turns -- the exact \
+rule for this turn is given under "REPLY LANGUAGE FOR THIS TURN" at the end of these instructions. \
+Exception: if the user explicitly asks for a particular language or script ("reply in English", \
+"සිංහල අකුරින් කියන්න", "sinhala akuren liyanna"), do exactly what they asked.
 
 You have tools to search documents and compute financial totals -- use them for any question \
 that needs real data. NEVER state a specific monetary figure, count, or total unless a tool \
 call returned it earlier in this conversation. If you don't have a tool result for a number, \
 call the right tool first instead of guessing.
+
+BE EFFICIENT WITH TOOLS (every extra round-trip makes the user wait): when a question needs a \
+total AND a breakdown, get both from ONE aggregate_financials call with group_by (e.g. \
+["vendor"]) instead of a total followed by a separate search. If you need several independent \
+lookups, request them together in the same step so they run in parallel. Don't call a tool \
+again for data you already have in this conversation.
+
+ORDERS (purchase order -> delivery note -> invoice -> receipt): for delivery progress, "how many \
+are still to come", whether an order was invoiced or paid, or what's left to pay on an order, \
+use get_order_chain (by document ID or PO/invoice number). For business-wide questions about \
+incomplete deliveries, over-billing, price differences or unpaid balances, use list_order_issues.
 
 TODAY'S DATE is {today}. Resolve relative periods ("this month", "last month", "this year") \
 against this date yourself before calling a tool with a doc_date filter.
@@ -86,9 +107,17 @@ def _should_continue(state: MessagesState) -> str:
     return "tools"
 
 
+def _latest_human_text(messages: list) -> str:
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            return m.content if isinstance(m.content, str) else str(m.content)
+    return ""
+
+
 def _guard_node(state: MessagesState) -> dict:
     turn = _current_turn(state["messages"])
     final = turn[-1]
+    lang = detect_reply_language(_latest_human_text(state["messages"]))
 
     if not isinstance(final, AIMessage) or not final.content:
         return {}
@@ -109,14 +138,8 @@ def _guard_node(state: MessagesState) -> dict:
     # Never dump raw tool JSON into the chat bubble — the exact figures the tools
     # returned are already surfaced in the "How I worked this out" trace and the
     # Sources panel. The bubble stays a clean, honest sentence pointing there.
-    fallback = (
-        "I pulled the figures but couldn't fully verify the answer I was about to "
-        "give, so I'd rather not state a number I'm unsure of. You can see exactly "
-        "what my tools returned under “How I worked this out” below — or "
-        "ask me to try again."
-    ) if tool_outputs else (
-        "I couldn't ground that answer in verified data — could you rephrase your question?"
-    )
+    # In the same language the user asked in (agent/language.py).
+    fallback = GUARD_FALLBACK[lang] if tool_outputs else GUARD_FALLBACK_NO_DATA[lang]
     # Returning a message with the same id REPLACES it in MessagesState's
     # add_messages reducer, so this overwrites the ungrounded answer in place.
     return {"messages": [AIMessage(content=fallback, id=final.id)]}
@@ -127,9 +150,13 @@ def build_agent_graph(tools: list, checkpointer, company_name: str, document_id:
     prompt = _SYSTEM_PROMPT.format(company_name=company_name, today=date.today().isoformat())
     if document_id:
         prompt += _DOC_CONTEXT.format(document_id=document_id)
-    system = SystemMessage(content=prompt)
-
     def agent_node(state: MessagesState) -> dict:
+        # Decide the reply language from the latest question on every model
+        # call (not once per thread), so a conversation can switch freely
+        # between English, Sinhala and Singlish. Appended to the single system
+        # message -- some providers reject a system message mid-conversation.
+        lang = detect_reply_language(_latest_human_text(state["messages"]))
+        system = SystemMessage(content=f"{prompt}\n\n{reply_language_instruction(lang)}")
         response = model.invoke([system] + list(state["messages"]))
         return {"messages": [response]}
 

@@ -20,6 +20,7 @@ from pathlib import Path
 from llm_correction import (
     correct_via_llm,
     count_sinhala_chars,
+    has_correctable_text,
     looks_like_bad_rewrite,
     preserve_sensitive_tokens,
     restore_sensitive_tokens,
@@ -93,6 +94,12 @@ def correct_box(box: dict) -> dict:
 
     has_digits = bool(extract_digits(raw_text))
     masked, placeholders = preserve_sensitive_tokens(raw_text)
+
+    if not has_correctable_text(masked):
+        result["text"] = raw_text
+        result["source"] = "raw_ocr"
+        result["locked_digits"] = has_digits
+        return result
 
     try:
         raw_reply = correct_via_llm(_BOX_PROMPT.format(masked_text=masked))

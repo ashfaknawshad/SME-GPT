@@ -41,7 +41,11 @@ export async function signupUser(data: {
     body: JSON.stringify(data),
   });
 
-  return res.ok;
+  if (res.ok) return { ok: true as const };
+  // Surface the server's reason (duplicate email, weak password, …) instead of
+  // letting the page report success for a request that was refused.
+  const body = await res.json().catch(() => ({}));
+  return { ok: false as const, error: (body?.error as string) || "Sign up failed. Please try again." };
 }
 
 export async function getSession(): Promise<SessionUser | null> {

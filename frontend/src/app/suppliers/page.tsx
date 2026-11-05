@@ -99,7 +99,7 @@ export default function SuppliersPage() {
       backLabel={t.backToDashboard}
       title={lang === "si" ? "සැපයුම්කරුවන් සහ ගනුදෙනුකරුවන්" : "Suppliers & Customers"}
       subtitle={lang === "si" ? "ඔබගේ ලේඛනවල ඇති සියලු ගනුදෙනු පාර්ශ්ව" : "All counterparties across your documents with full transaction history."}
-      width="full"
+      width="standard"
     >
 
           {/* Duplicate vendor alert */}

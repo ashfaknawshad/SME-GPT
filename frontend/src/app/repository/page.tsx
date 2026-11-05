@@ -104,6 +104,9 @@ export default function RepositoryPage() {
   const [autoClassify, setAutoClassify] = useState(true);
   // Iteration 10: per-tab status filters
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  // PO -> DN -> Invoice -> Receipt chain per document (GET /order-summary).
+  const [chain, setChain] = useState<Record<string, { order: string | null; status: string | null; issues: number; linked: number; suggestion?: boolean }>>({});
+  const [issuesOnly, setIssuesOnly] = useState(false);
 
   useEffect(() => {
     setLang(getStoredLanguage());
@@ -138,6 +141,11 @@ export default function RepositoryPage() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || "Failed to fetch.");
       setDocuments(data.documents || []);
+      // Chain chips load alongside; never block or fail the list on them.
+      fetch(`${BACKEND_URL}/order-summary`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => { if (d.success) setChain(d.documents || {}); })
+        .catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch documents.");
     } finally {
@@ -147,8 +155,24 @@ export default function RepositoryPage() {
 
   useEffect(() => { loadDocuments(); }, [router, dateFrom, dateTo]);
 
-  // Reset statusFilter when the main tab changes
-  const handleTabChange = (v: TabType) => { setTab(v); setStatusFilter("all"); };
+  // Open on the tab named in ?type= (the dashboard's stat cards link here).
+  useEffect(() => {
+    const want = new URLSearchParams(window.location.search).get("type") as TabType | null;
+    if (want && (["all", "invoice", "po", "dn", "receipt", "archived"] as TabType[]).includes(want)) setTab(want);
+  }, []);
+
+  // Reset statusFilter when the main tab changes, and keep ?type= in sync so a
+  // reload — or Back from a document — returns to the same tab.
+  const handleTabChange = (v: TabType) => {
+    setTab(v);
+    setStatusFilter("all");
+    try {
+      const url = new URL(window.location.href);
+      if (v === "all") url.searchParams.delete("type");
+      else url.searchParams.set("type", v);
+      window.history.replaceState(window.history.state, "", url);
+    } catch { /* non-fatal */ }
+  };
 
   const filtered = useMemo(() => {
     let byTab: RepoDocument[];
@@ -168,15 +192,24 @@ export default function RepositoryPage() {
         return true;
       });
     }
+    if (issuesOnly) byTab = byTab.filter((d) => (chain[d.document_id]?.issues ?? 0) > 0 || chain[d.document_id]?.suggestion);
     if (!searchQuery.trim()) return byTab;
     const q = searchQuery.toLowerCase();
     return byTab.filter(
       (d) =>
         d.document_id.toLowerCase().includes(q) ||
         (d.company_name || "").toLowerCase().includes(q) ||
-        (d.supplier_name || "").toLowerCase().includes(q)
+        (d.supplier_name || "").toLowerCase().includes(q) ||
+        (chain[d.document_id]?.order || "").toLowerCase().includes(q)
     );
-  }, [tab, documents, searchQuery, statusFilter]);
+  }, [tab, documents, searchQuery, statusFilter, issuesOnly, chain]);
+
+  const needsAttention = Object.values(chain).filter((c) => c.issues > 0 || c.suggestion).length;
+  const ORDER_LABEL: Record<string, [string, string]> = {
+    paid: ["Paid", "ගෙවා ඇත"], partially_paid: ["Partly paid", "අර්ධව ගෙවා ඇත"], invoiced: ["Invoiced", "ඉන්වොයිස් කර ඇත"],
+    delivered: ["Delivered", "ලැබී ඇත"], partially_delivered: ["Partly delivered", "අර්ධව ලැබී ඇත"],
+    ordered: ["Ordered", "ඇණවුම් කර ඇත"], open: ["Open", "විවෘත"],
+  };
 
   const tabLabel = (v: TabType) => {
     const labels: Record<TabType, string> = {
@@ -217,7 +250,7 @@ export default function RepositoryPage() {
     <PageShell
       title={t.repositoryTitle}
       subtitle={t.repoSubtitle}
-      width="full"
+      width="standard"
     >
 
           {/* Search bar */}
@@ -295,6 +328,19 @@ export default function RepositoryPage() {
                 {tabLabel(v)}
               </button>
             ))}
+            {needsAttention > 0 && (
+              <button
+                onClick={() => setIssuesOnly((v) => !v)}
+                aria-pressed={issuesOnly}
+                className="ml-auto flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-semibold transition"
+                style={issuesOnly
+                  ? { background: "var(--warn)", color: "#fff" }
+                  : { background: "var(--warn-tint)", border: "1px solid var(--warn-border)", color: "var(--warn)" }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: 15 }}>warning</span>
+                {lang === "si" ? "ගැටලු ඇති" : "Has issues"} ({needsAttention})
+              </button>
+            )}
           </div>
 
           {/* Iteration 10: Status sub-filter chips */}
@@ -421,11 +467,43 @@ export default function RepositoryPage() {
                         )}
 
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                          <span
-                            className="rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase"
-                            style={{ background: badge.bg, color: badge.color }}
-                          >
-                            {badge.label}
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className="rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase"
+                              style={{ background: badge.bg, color: badge.color }}
+                            >
+                              {badge.label}
+                            </span>
+                            {(() => {
+                              const c = chain[item.document_id];
+                              if (!c) return null;
+                              return (
+                                <>
+                                  {c.order && (
+                                    <span className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold"
+                                      title={lang === "si" ? "සම්බන්ධිත ඇණවුම" : "Linked order"}
+                                      style={{ background: "var(--brand-tint)", color: "var(--brand-mid)" }}>
+                                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>link</span>
+                                      {c.order}{c.status && ORDER_LABEL[c.status] ? ` · ${ORDER_LABEL[c.status][lang === "si" ? 1 : 0]}` : ""}
+                                    </span>
+                                  )}
+                                  {c.issues > 0 && (
+                                    <span className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold"
+                                      style={{ background: "var(--warn-tint)", color: "var(--warn)", border: "1px solid var(--warn-border)" }}>
+                                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>warning</span>
+                                      {c.issues} {lang === "si" ? "ගැටලු" : c.issues === 1 ? "issue" : "issues"}
+                                    </span>
+                                  )}
+                                  {c.suggestion && (
+                                    <span className="flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-[10px] font-bold"
+                                      style={{ borderColor: "var(--brand-mid)", color: "var(--brand-mid)" }}>
+                                      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>add_link</span>
+                                      {lang === "si" ? "යෝජිත සම්බන්ධයක්" : "Suggested link"}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </span>
                           <div className="flex items-center gap-3">
                             <button

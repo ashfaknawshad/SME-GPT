@@ -50,10 +50,16 @@ def _init_pool():
         return
     try:
         from psycopg_pool import ConnectionPool
+        # Env-tunable so the pool can grow when you move off the Supabase free
+        # tier (or run more backend instances) without a code change. Defaults
+        # keep min=1/max=8 — safe within the free pooler's ~60 connection cap
+        # even across a few instances (instances × DB_POOL_MAX must stay < cap).
+        _min = int(os.getenv("DB_POOL_MIN", "1"))
+        _max = int(os.getenv("DB_POOL_MAX", "8"))
         _pool = ConnectionPool(
             conninfo=url,
-            min_size=1,
-            max_size=8,
+            min_size=_min,
+            max_size=max(_min, _max),
             kwargs={
                 "row_factory": dict_row,
                 "prepare_threshold": None,

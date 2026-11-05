@@ -282,6 +282,14 @@ def ensure_query_history_table():
         source_file TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+    -- Scaling: every read of a user's history filters by user_id (often newest
+    -- first), so index it — without this the query seq-scans the whole table,
+    -- which grows with EVERY user's queries. Self-healing on startup so it
+    -- exists in all environments (mirrored by migration 011).
+    CREATE INDEX IF NOT EXISTS idx_query_history_user
+      ON query_history (user_id);
+    CREATE INDEX IF NOT EXISTS idx_query_history_user_created
+      ON query_history (user_id, created_at DESC);
     """
 
     with get_db_connection() as conn:
@@ -348,6 +356,25 @@ def startup_event():
     except Exception as e:
         print(f"[DB] Processing sessions table init skipped/failed: {e}", flush=True)
     threading.Thread(target=_evict_stale_sessions, daemon=True, name="session-gc").start()
+
+    # Warm-up: the multilingual embedding model takes ~15-20 s to load, which
+    # used to land on whoever asked the first chat question after a restart.
+    # Load it (and the chat checkpointer's DB setup) in the background now.
+    def _warm_up():
+        try:
+            from embedding_service import get_embedding_service
+            get_embedding_service().embed(["warm up"], mode="query")
+            print("[WARMUP] embedding model loaded", flush=True)
+        except Exception as e:
+            print(f"[WARMUP] embedding model skipped: {e}", flush=True)
+        if AGENT_QUERY_ENGINE_ENABLED:
+            try:
+                from agent.memory import get_checkpointer
+                get_checkpointer()
+                print("[WARMUP] chat memory ready", flush=True)
+            except Exception as e:
+                print(f"[WARMUP] chat memory skipped: {e}", flush=True)
+    threading.Thread(target=_warm_up, daemon=True, name="warmup").start()
     print("[SESSION GC] stale session eviction thread started", flush=True)
     invalidate_column_cache()
 
@@ -833,7 +860,7 @@ def to_preview_data(fields: dict) -> dict:
     return {
         "document_type": safe_text(fields.get("document_type")),
         "order_id": safe_text(fields.get("order_id")),
-        "po_reference": safe_text(fields.get("po_reference")),
+        "po_ref": str(fields.get("po_ref") or ""),  # blank, not "NULL": it's a text box
         "flow_type": safe_text(fields.get("flow_type")),
         "company_name": safe_text(fields.get("company_name")),
         "supplier_name": safe_text(fields.get("supplier_name")),
@@ -866,7 +893,11 @@ def merge_edited_preview_into_fields(original_fields: dict, edited_preview: dict
     editable_keys = [
         "document_type",
         "order_id",
-        "po_reference",
+        # Migration 012 — reference numbers used for PO/DN/Invoice/Receipt linking
+        "doc_number",
+        "po_ref",
+        "dn_ref",
+        "invoice_ref",
         "flow_type",
         "company_name",
         "supplier_name",
@@ -1090,13 +1121,16 @@ class ConfirmSaveRequest(BaseModel):
     session_id: str
     edited_preview: dict
     force_save: bool = False
+    # Documents the user ticked in "This looks like the invoice for PO-…" on
+    # the review screen; linked as confirmed right after saving.
+    link_targets: List[str] = []
 
 
 class ManualDocumentRequest(BaseModel):
     """IT: Manual document entry — no OCR, data entered by the user."""
     document_type: str = "receipt"       # receipt | invoice | po | dn
     order_id: Optional[str] = None       # auto-generated if blank
-    po_reference: Optional[str] = None   # PO number a DN / invoice belongs to
+    po_ref: Optional[str] = None         # PO number a DN / invoice belongs to
     date: Optional[str] = None           # defaults to today
     supplier_name: str = ""              # the other party
     currency: str = "LKR"
@@ -1128,7 +1162,11 @@ class UpdateDocumentRequest(BaseModel):
     date: Optional[str] = None
     document_type: Optional[str] = None
     order_id: Optional[str] = None
-    po_reference: Optional[str] = None
+    # Migration 012 — reference numbers used for PO/DN/Invoice/Receipt linking
+    doc_number: Optional[str] = None
+    po_ref: Optional[str] = None
+    dn_ref: Optional[str] = None
+    invoice_ref: Optional[str] = None
     flow_type: Optional[str] = None
     currency: Optional[str] = None
     raw_total_amount: Optional[Any] = None
@@ -1154,9 +1192,28 @@ class UpdateDocumentRequest(BaseModel):
 # =========================
 @app.get("/healthz")
 def healthz():
-    """Liveness probe for Docker / uptime monitors. Unlike /health it makes no
-    LLM calls, so polling it every few seconds costs nothing."""
+    """Liveness probe for a load balancer / orchestrator. Intentionally does NO
+    external I/O (no DB, no LLM) so it answers instantly and only means "this
+    process is up". Use /readyz to gate traffic and /health for diagnostics."""
     return {"ok": True}
+
+
+@app.get("/readyz")
+def readyz():
+    """Readiness probe: is this instance able to serve requests right now? Checks
+    the one hard dependency every request needs — the database — with a cheap
+    SELECT 1 through the pool. Returns 503 (not 200) when the DB is unreachable
+    so the load balancer stops routing traffic to a broken instance instead of
+    serving errors. Does not touch the LLM (an LLM outage degrades gracefully;
+    it must not mark a healthy instance unready)."""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        return {"ready": True, "db": "ok"}
+    except Exception as err:
+        raise HTTPException(status_code=503, detail=f"database unavailable: {err}")
 
 
 @app.get("/health")
@@ -1393,6 +1450,9 @@ async def process_document_stream(
             extracted_json["arithmetic_status"] = arithmetic_validation.get("status", "not_checked")
             extracted_json["file_size_kb"] = file_size_kb
 
+            # On a mismatch the final total is set to the line items (qty x unit
+            # price, plus printed tax). The document stays flagged "mismatch"
+            # and the printed value is kept in arithmetic_validation.discrepancies.
             recommended = arithmetic_validation.get("recommended", {}) or {}
             if extracted_json["arithmetic_status"] == "mismatch":
                 if recommended.get("final_total_amount") is not None:
@@ -1510,7 +1570,7 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
 
     # All keys produced by to_preview_data() — editable + read-only display fields
     _ALLOWED_PREVIEW_KEYS = {
-        "document_type", "order_id", "po_reference", "flow_type", "company_name", "supplier_name",
+        "document_type", "order_id", "po_ref", "flow_type", "company_name", "supplier_name",
         "date", "currency", "raw_total_amount", "final_total_amount", "payable_amount",
         "cash_return", "tax_amount", "tax_rate",
         "cash_inflowed", "cash_outflowed", "category",
@@ -1641,16 +1701,26 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
         except Exception as _c4_err:
             print(f"[CONFIRM-SAVE] C4 entity index failed (non-fatal): {_c4_err}", flush=True)
 
-        # 3) Order reconciliation — cascade PO status from the order's Delivery
-        #    Notes (PO → DN → Invoice state machine). Saving a DN can flip its
-        #    linked PO to partially_delivered / fulfilled, and vice-versa.
-        try:
-            from order_reconciliation import reconcile_after_change as _reconcile_change
-            for _summary in _reconcile_change(user_id, None, final_data):
-                if _summary.get("changes"):
-                    print(f"[CONFIRM-SAVE] order {_summary['order_id']} reconciled: {_summary['changes']}", flush=True)
-        except Exception as _rec_err:
-            print(f"[CONFIRM-SAVE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+        # 3) Order linking — connect PO → DN → Invoice → Receipt (by reference
+        #    numbers, counterparty, items and amounts) and cascade the matched
+        #    statuses (PO delivery, invoice payment). See document_links.py /
+        #    order_matching.py.
+        _new_id = str((save_result.get("record") or {}).get("document_id") or "")
+        _new_type = str(final_data.get("document_type") or "").lower()
+        for _tid in (payload.link_targets or []):
+            try:
+                from document_links import relation_for, set_link_decision
+                _other = get_record_by_id_for_user(user_id, _tid)
+                if not (_other and _new_id):
+                    continue
+                _ot = str(_other.get("document_type") or "").lower()
+                if (_lt := relation_for(_new_type, _ot)):
+                    set_link_decision(user_id, _new_id, _tid, _lt, "confirmed")
+                elif (_lt := relation_for(_ot, _new_type)):
+                    set_link_decision(user_id, _tid, _new_id, _lt, "confirmed")
+            except Exception as _lk_err:
+                print(f"[CONFIRM-SAVE] link to {_tid} failed (non-fatal): {_lk_err}", flush=True)
+        _relink_tenant_now(user_id, "CONFIRM-SAVE")
 
     threading.Thread(target=_post_save_enrich, daemon=True).start()
     # ─────────────────────────────────────────────────────────────────────
@@ -1730,13 +1800,7 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
     # Order reconciliation: editing a document (e.g. marking a Delivery Note
     # delivered) can change its linked PO's fulfilment status. Run synchronously
     # so the persisted PO status is settled before the UI refetches the order.
-    # Both orders are reconciled when the edit moved the document between them.
-    try:
-        from order_reconciliation import reconcile_after_change as _reconcile_change
-        _after = updated if isinstance(updated, dict) else {**existing, **update_data}
-        _reconcile_change(user_id, existing, _after)
-    except Exception as _rec_err:
-        print(f"[DOCUMENT_UPDATE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+    _relink_tenant_now(user_id, "DOCUMENT_UPDATE")
 
     # IT-27b: Send email notification when a PO is approved/rejected
     if update_data.get("po_status") in ("approved", "rejected") and update_data.get("approved_by"):
@@ -1760,30 +1824,198 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
     }
 
 
+def _relink_tenant_now(user_id: str, why: str, records: list | None = None):
+    """Recompute PO → DN → Invoice → Receipt links + statuses for a tenant.
+    Returns (status-updated records, current links) for reuse, or (None, None).
+    Never raises: linking must not break a save."""
+    try:
+        from order_reconciliation import reconcile_tenant
+        report = reconcile_tenant(user_id, records=records)
+        if report["applied"] or report["links"]["added"] or report["links"]["removed"]:
+            print(f"[LINKS:{why}] +{len(report['links']['added'])} -{len(report['links']['removed'])} links, "
+                  f"updated {report['applied']}", flush=True)
+        return report.get("records"), report.get("tenant_links")
+    except Exception as err:
+        print(f"[LINKS:{why}] relink failed (non-fatal): {err}", flush=True)
+        return None, None
+
+
 @app.get("/documents/{document_id}/order")
 def get_document_order(document_id: str, authorization: str = Header(default=None)):
-    """Order timeline for the order this document belongs to: the PO → DN →
-    Invoice chain (documents sharing its order_id) plus the reconciled PO
-    status and delivery/invoice/payment flags. Returns order=null when the
-    document has no order_id (nothing to link)."""
+    """The linked order around this document: PO → DN(s) → Invoice(s) →
+    Receipt(s) with line-by-line ordered/delivered/invoiced quantities,
+    invoice payments, issues (partial delivery, over-billing, price
+    differences, unpaid balances) and pending link suggestions.
+    Returns order=null when the document is not linked to anything."""
     user_id = get_current_user_id(authorization)
     record = get_record_by_id_for_user(user_id, document_id)
     if not record:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    # A DN / invoice is found through the PO number it references, not its
-    # own number; order_view_for_document returns None when nothing links.
-    from order_reconciliation import order_view_for_document
-    return {"success": True, "order": order_view_for_document(record, user_id)}
+    from order_reconciliation import build_chain_view
+    return {"success": True, "order": build_chain_view(document_id, user_id)}
+
+
+class LinkDecisionRequest(BaseModel):
+    target_id: str
+    # "confirmed" links the two documents (also how a user links by hand);
+    # "rejected" removes the link / dismisses the suggestion for good.
+    decision: str = "confirmed"
+    # With decision="rejected": "pair" rejects only the link between the two
+    # documents; "order" detaches target_id from this document's whole order
+    # (rejects every active link between it and the order's documents).
+    scope: str = "pair"
+
+
+@app.post("/documents/{document_id}/links")
+def decide_document_link(document_id: str, payload: LinkDecisionRequest,
+                         authorization: str = Header(default=None)):
+    """Confirm, reject or manually create a link between this document and
+    another one (direction is worked out from the two document types)."""
+    user_id = get_current_user_id(authorization)
+    require_write_role(authorization)
+    if payload.decision not in ("confirmed", "rejected"):
+        raise HTTPException(status_code=400, detail="decision must be 'confirmed' or 'rejected'.")
+
+    from dataset_manager import load_all_records
+    records = load_all_records(user_id=user_id)  # one read, reused below
+    by_id = {str(r.get("document_id")): r for r in records}
+    this, other = by_id.get(document_id), by_id.get(payload.target_id)
+    if not this or not other:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    from document_links import chain_component, load_tenant_links, relation_for, set_link_decision
+
+    if payload.decision == "rejected" and payload.scope == "order":
+        links = load_tenant_links(user_id)
+        comp = chain_component(document_id, links)
+        detached = [l for l in links if l["status"] in ("auto", "confirmed")
+                    and payload.target_id in (l["from"], l["to"]) and l["from"] in comp and l["to"] in comp]
+        for l in detached:
+            set_link_decision(user_id, l["from"], l["to"], l["link_type"], "rejected")
+        threading.Thread(target=_log_audit_event, daemon=True, args=(
+            user_id, "DOCUMENT_LINK", f"detached {payload.target_id} from order of {document_id} ({len(detached)} links)")).start()
+        recs, tl = _relink_tenant_now(user_id, "LINK_DECISION", records)
+        from order_reconciliation import build_chain_view
+        return {"success": True, "order": build_chain_view(document_id, user_id, records=recs, links=tl)}
+
+    t_this = str(this.get("document_type") or "").lower()
+    t_other = str(other.get("document_type") or "").lower()
+    if (lt := relation_for(t_this, t_other)):
+        child, parent = document_id, payload.target_id
+    elif (lt := relation_for(t_other, t_this)):
+        child, parent = payload.target_id, document_id
+    else:
+        raise HTTPException(status_code=400, detail=f"A {t_this} can't be linked to a {t_other}.")
+
+    set_link_decision(user_id, child, parent, lt, payload.decision)
+    threading.Thread(target=_log_audit_event, daemon=True, args=(
+        user_id, "DOCUMENT_LINK", f"{child} -> {parent} {lt} {payload.decision}")).start()
+    recs, tl = _relink_tenant_now(user_id, "LINK_DECISION", records)
+
+    from order_reconciliation import build_chain_view
+    return {"success": True, "order": build_chain_view(document_id, user_id, records=recs, links=tl)}
+
+
+@app.get("/order-issues")
+def get_order_issues(authorization: str = Header(default=None)):
+    """Dashboard "Order issues" card: linked orders that need attention
+    (partial deliveries, over-billing, price differences, unpaid balances),
+    worst first, plus counts and the number of pending link suggestions."""
+    user_id = get_current_user_id(authorization)
+    from order_reconciliation import tenant_order_issues
+    return {"success": True, **tenant_order_issues(user_id)}
+
+
+class LinkPreviewRequest(BaseModel):
+    preview: dict
+
+
+@app.post("/link-preview")
+def link_preview(payload: LinkPreviewRequest, authorization: str = Header(default=None)):
+    """For the upload review screen, before saving: which existing documents
+    does this extracted document belong with? ("This looks like the invoice
+    for PO-2026-041.") Read-only."""
+    user_id = get_current_user_id(authorization)
+    from dataset_manager import load_all_records
+    from document_links import RELATIONS, SUGGEST_THRESHOLD, AUTO_THRESHOLD, prepare, score_pair
+
+    draft = dict(payload.preview or {})
+    draft["document_id"] = "__new__"
+    me = prepare(draft)
+    if me["type"] not in ("po", "dn", "invoice", "receipt"):
+        return {"success": True, "candidates": [], "references": me["refs"]}
+
+    out = []
+    for r in load_all_records(user_id=user_id):
+        other = prepare(r)
+        if (me["type"], other["type"]) in RELATIONS:
+            score, reasons = score_pair(me, other)
+        elif (other["type"], me["type"]) in RELATIONS:
+            score, reasons = score_pair(other, me)
+        else:
+            continue
+        if score >= SUGGEST_THRESHOLD:
+            out.append({
+                "document_id": other["document_id"], "document_type": other["type"],
+                "number": other["refs"].get("doc_number") or "", "date": r.get("date"),
+                "supplier_name": r.get("supplier_name") or "", "amount": other["total"],
+                "currency": r.get("currency") or "LKR", "score": score, "reasons": reasons,
+                "strong": score >= AUTO_THRESHOLD,
+            })
+    out.sort(key=lambda c: -c["score"])
+    return {"success": True, "candidates": out[:4], "references": me["refs"]}
+
+
+@app.get("/order-summary")
+def get_order_summary(authorization: str = Header(default=None)):
+    """Chain chip data for the Files list: for each linked document, its
+    order number, order status and number of warnings/errors."""
+    user_id = get_current_user_id(authorization)
+    from order_reconciliation import tenant_link_summary
+    return {"success": True, "documents": tenant_link_summary(user_id)}
+
+
+@app.get("/documents/{document_id}/link-candidates")
+def get_link_candidates(document_id: str, authorization: str = Header(default=None)):
+    """Documents this one could be linked to (for a "Link a document" picker),
+    best matches first, with the match score and reasons."""
+    user_id = get_current_user_id(authorization)
+    from dataset_manager import load_all_records
+    from document_links import RELATIONS, prepare, score_pair
+
+    records = load_all_records(user_id=user_id)
+    prepared = {str(r.get("document_id")): prepare(r) for r in records
+                if str(r.get("document_type") or "").lower() in ("po", "dn", "invoice", "receipt")}
+    me = prepared.get(document_id)
+    if not me:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    out = []
+    for other_id, other in prepared.items():
+        if other_id == document_id:
+            continue
+        if (me["type"], other["type"]) in RELATIONS:
+            score, reasons = score_pair(me, other)
+        elif (other["type"], me["type"]) in RELATIONS:
+            score, reasons = score_pair(other, me)
+        else:
+            continue
+        out.append({
+            "document_id": other_id, "document_type": other["type"],
+            "number": other["refs"].get("doc_number") or "", "date": other["record"].get("date"),
+            "supplier_name": other["record"].get("supplier_name") or "", "amount": other["total"],
+            "currency": other["record"].get("currency") or "LKR",
+            "score": score, "reasons": reasons,
+        })
+    out.sort(key=lambda c: (-c["score"], c["document_id"]))
+    return {"success": True, "candidates": out[:25]}
 
 
 @app.delete("/documents/{document_id}")
 def delete_document(document_id: str, authorization: str = Header(default=None)):
     user_id = get_current_user_id(authorization)
     require_write_role(authorization)
-
-    # Read before deleting: the record says which order to reconcile afterwards.
-    before = get_record_by_id_for_user(user_id=user_id, document_id=document_id)
 
     deleted = delete_record_for_user(
         user_id=user_id,
@@ -1794,14 +2026,7 @@ def delete_document(document_id: str, authorization: str = Header(default=None))
         raise HTTPException(status_code=404, detail="Document not found.")
 
     _log_audit_event(user_id, "DOCUMENT_DELETED", f"document_id={document_id}")
-
-    # A deleted Delivery Note no longer counts as delivery evidence for its PO.
-    if before:
-        try:
-            from order_reconciliation import reconcile_after_change as _reconcile_change
-            _reconcile_change(user_id, before, None)
-        except Exception as _rec_err:
-            print(f"[DOCUMENT_DELETE] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+    threading.Thread(target=_relink_tenant_now, args=(user_id, "DOCUMENT_DELETE"), daemon=True).start()
 
     return {
         "success": True,
@@ -1893,7 +2118,7 @@ def create_manual_document(
     doc_data: dict = {
         "document_type":      doc_type,
         "order_id":           order_id,
-        "po_reference":       str(payload.po_reference or "").strip() if doc_type in ("dn", "invoice") else "",
+        "po_ref":             str(payload.po_ref or "").strip() if doc_type in ("dn", "invoice") else "",
         "flow_type":          flow_type,
         "effective_flow_type": flow_type,
         "company_name":       user_company,
@@ -1912,6 +2137,10 @@ def create_manual_document(
         "paid_status":        "paid" if doc_type == "receipt" else "not_paid",
         "status":             "ready",
         "language":           "en",
+        # normalize_record() reads "items"; without it every manually created
+        # document was saved with no line items (totals survived only because
+        # they are computed above).
+        "items":              items,
         "items_json":         __import__("json").dumps(items, ensure_ascii=False),
         "corrected_text":     f"Manual entry: {doc_type} {order_id}",
         "raw_text":           "",
@@ -1959,14 +2188,7 @@ def create_manual_document(
         _index_doc(doc_data, user_id)
     except Exception:
         pass
-
-    # Order reconciliation: a manually entered DN / PO joins its order like an
-    # uploaded one does.
-    try:
-        from order_reconciliation import reconcile_after_change as _reconcile_change
-        _reconcile_change(user_id, None, doc_data)
-    except Exception as _rec_err:
-        print(f"[MANUAL-ENTRY] order reconciliation failed (non-fatal): {_rec_err}", flush=True)
+    threading.Thread(target=_relink_tenant_now, args=(user_id, "MANUAL"), daemon=True).start()
 
     return {
         "success": True,

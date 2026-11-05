@@ -135,7 +135,7 @@ def test_search_documents_attaches_matched_snippets(monkeypatch):
         "currency": "LKR", "final_total_amount": 5000.0, "payable_amount": 5000.0,
         "raw_total_amount": 5000.0, "items": [],
     }])
-    monkeypatch.setattr("agent.tools.resolve_scope_with_rag", lambda q, company, user: (df, None))
+    monkeypatch.setattr("agent.tools.resolve_scope_with_rag", lambda q, company, user, **kw: (df, None))
     monkeypatch.setattr("agent.tools.retrieve_rag_chunks", lambda q, user, k=6: [
         {"document_id": "IN1", "chunk_type": "line_item_row", "page": 1,
          "bbox": [0, 0, 1, 1], "text": "LineItem | Description: Sugar | Total: 5000"},

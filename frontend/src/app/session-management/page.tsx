@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
-import ThemeToggle from "@/components/layout/ThemeToggle";
+import TopBar from "@/components/layout/TopBar";
+import PageHeading from "@/components/layout/PageHeading";
 import { getSession } from "@/lib/auth";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { confirmDialog } from "@/lib/confirm";
@@ -163,32 +163,11 @@ export default function SessionManagementPage() {
   return (
     <MobileShell>
       <div className="pad-nav" style={{ background: "var(--bg)" }}>
-        <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h1 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[28px]">
-                {t.smTitle}
-              </h1>
-              <p className="mt-1 text-[13px] text-[var(--text-2)]">
-                {t.smSubtitle}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <LanguageSwitcher />
-            </div>
-          </div>
+        <TopBar title={t.smTitle} fallbackHref="/settings" />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <PageHeading title={t.smTitle} subtitle={t.smSubtitle} />
 
           <div className="mb-5 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/profile")}
-              className="rounded-xl px-4 py-2 text-[13px] font-bold text-[var(--text-2)]"
-              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
-            >
-              {t.backToProfile}
-            </button>
-
             <button
               type="button"
               onClick={async () => {

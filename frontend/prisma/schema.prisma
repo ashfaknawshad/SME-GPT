@@ -99,6 +99,11 @@ model query_history {
   evidence     Json?
   source_file  String?
   created_at   DateTime? @default(now()) @db.Timestamp(6)
+
+  // Scaling: reads filter by user_id (often newest-first). See backend
+  // migration 011_scaling_indexes.sql / ensure_query_history_table().
+  @@index([user_id])
+  @@index([user_id, created_at])
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -113,7 +118,12 @@ model FinancialDocument {
   documentId         String
   documentType       String?
   orderId            String?
-  poReference        String?
+  poReference        String? // superseded by poRef; existing values still link
+  // Migration 012 — own number vs. references (PO -> DN -> Invoice -> Receipt linking)
+  docNumber          String?
+  poRef              String?
+  dnRef              String?
+  invoiceRef         String?
   flowType           String?
   effectiveFlowType  String?
   companyName        String?
@@ -221,6 +231,8 @@ model DocLink {
   toEntityRef String?
   toDocId     String?
   confidence  Float    @default(1.0)
+  // Migration 012 — auto | suggested | confirmed | rejected
+  status      String   @default("auto")
   evidence    Json?
   createdAt   DateTime @default(now())
 

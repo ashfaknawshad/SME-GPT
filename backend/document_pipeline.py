@@ -344,13 +344,13 @@ def build_preview_from_versions(version_paths: list[dict]) -> dict:
     extracted_json["arithmetic_validation"] = arithmetic_validation
     extracted_json["arithmetic_status"] = arithmetic_validation.get("status", "not_checked")
 
+    # On a mismatch the final total is set to the line items (qty x unit price,
+    # plus printed tax). The document stays flagged "mismatch" and the printed
+    # value is kept in arithmetic_validation["discrepancies"].
     recommended = arithmetic_validation.get("recommended", {}) or {}
-
     if extracted_json["arithmetic_status"] == "mismatch":
-        # Keep raw total as extracted OCR value
         if recommended.get("final_total_amount") is not None:
             extracted_json["final_total_amount"] = recommended["final_total_amount"]
-
         if recommended.get("payable_amount") is not None:
             extracted_json["payable_amount"] = recommended["payable_amount"]
 

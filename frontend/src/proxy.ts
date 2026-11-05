@@ -78,7 +78,10 @@ export function proxy(req: NextRequest) {
 export const config = {
   // Skip API routes (they do their own auth and must be able to return 401
   // rather than a redirect), Next internals, and static assets.
+  // manifest.json and sw.js are public PWA files: browsers fetch the manifest
+  // *without* cookies, so guarding it redirected every fetch to /login and the
+  // installed app lost its name, icons and standalone mode.
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff2?)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|manifest\\.json$|sw\\.js$|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff2?)$).*)",
   ],
 };

@@ -73,6 +73,11 @@ DATASET_COLUMNS = [
     "company_city",
     "company_phone",
     "company_email",
+    # Migration 012 — own number vs. references (document linking)
+    "doc_number",
+    "po_ref",
+    "dn_ref",
+    "invoice_ref",
 ]
 
 # record key -> DB column (Prisma camelCase). items_json is handled separately.
@@ -131,6 +136,11 @@ RECORD_TO_DB = {
     "company_city": "companyCity",
     "company_phone": "companyPhone",
     "company_email": "companyEmail",
+    # Migration 012 — own number vs. references (document linking)
+    "doc_number": "docNumber",
+    "po_ref": "poRef",
+    "dn_ref": "dnRef",
+    "invoice_ref": "invoiceRef",
 }
 
 MONEY_FIELDS = {"raw_total_amount", "final_total_amount", "payable_amount", "cash_return", "tax_amount", "tax_rate", "cash_inflowed", "cash_outflowed"}
@@ -347,6 +357,11 @@ def normalize_record(data: dict, user_id: str, force_generate_document_id: bool 
         "company_city": nullify_text(data.get("company_city", None)),
         "company_phone": nullify_text(data.get("company_phone", None)),
         "company_email": nullify_text(data.get("company_email", None)),
+        # Migration 012 — own number vs. references (document linking)
+        "doc_number": nullify_text(data.get("doc_number", None)),
+        "po_ref": nullify_text(data.get("po_ref", None)),
+        "dn_ref": nullify_text(data.get("dn_ref", None)),
+        "invoice_ref": nullify_text(data.get("invoice_ref", None)),
     }
 
 

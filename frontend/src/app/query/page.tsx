@@ -9,8 +9,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import ThemeToggle from "@/components/layout/ThemeToggle";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
+import TopBar from "@/components/layout/TopBar";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { getSession } from "@/lib/auth";
 import { confirmDialog } from "@/lib/confirm";
@@ -19,7 +18,6 @@ import { humanizeFlow } from "@/lib/humanize";
 import { resolveBackendUrl } from "@/lib/backendUrl";
 import Markdown from "@/components/ui/Markdown";
 import SupplierHistoryDrawer from "@/components/ui/SupplierHistoryDrawer";
-import TypingIndicator from "@/components/ui/TypingIndicator";
 import { useSpeechInput, type SpeechInputError } from "@/lib/useSpeechInput";
 
 const BACKEND_URL = resolveBackendUrl();
@@ -157,6 +155,12 @@ export default function AiAssistantChatPage() {
   const [loading, setLoading] = useState(false);
   const [threadLoading, setThreadLoading] = useState(false);
   const [error, setError] = useState("");
+  // Staged "what I'm doing" text while an answer is being prepared.
+  const [loadingStage, setLoadingStage] = useState(0);
+  // Voice input language — separate from the UI language toggle. Speech
+  // engines listen in exactly one language per session, so the user picks it
+  // (EN / සි); it defaults to the script of their last message.
+  const [micLang, setMicLang] = useState<"en" | "si">("en");
   const [expandedEvidence, setExpandedEvidence] = useState<Set<string>>(new Set());
   const [expandedTrace, setExpandedTrace] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -288,19 +292,39 @@ export default function AiAssistantChatPage() {
     ta.style.height = `${Math.min(Math.max(ta.scrollHeight, 44), 160)}px`;
   }, [input]);
 
+  // Remember the mic language per device; otherwise follow the UI language.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mic-lang");
+      setMicLang(saved === "si" || saved === "en" ? saved : getStoredLanguage() === "si" ? "si" : "en");
+    } catch { /* storage blocked */ }
+  }, []);
+
   const VOICE_ERRORS: Record<SpeechInputError, string> = {
     unsupported: t.voiceUnsupported,
     "no-speech": t.voiceNoSpeech,
     "not-allowed": t.voiceNotAllowed,
     network: t.voiceNetwork,
+    language: t.voiceLanguage,
     failed: t.voiceFailed,
   };
+  const speechLang = (code: "en" | "si") => (code === "si" ? "si-LK" : "en-US");
   const voice = useSpeechInput({
-    lang: lang === "si" ? "si-LK" : "en-US",
+    lang: speechLang(micLang),
     onText: setInput,
     onError: (e) => setError(VOICE_ERRORS[e]),
   });
   const isListening = voice.listening;
+
+  const chooseMicLang = (next: "en" | "si") => {
+    setMicLang(next);
+    try { localStorage.setItem("mic-lang", next); } catch { /* storage blocked */ }
+    // Switching mid-dictation restarts in the new language.
+    if (voice.listening) {
+      voice.stop();
+      setTimeout(() => voice.start(input, speechLang(next)), 250);
+    }
+  };
 
   // The mic button toggles: start dictating after whatever is typed, or stop.
   const handleVoice = () => {
@@ -311,6 +335,12 @@ export default function AiAssistantChatPage() {
     setError("");
     voice.start(input);
   };
+
+  useEffect(() => {
+    if (!loading) { setLoadingStage(0); return; }
+    const timers = [1500, 4000, 7500, 15000].map((ms, i) => window.setTimeout(() => setLoadingStage(i + 1), ms));
+    return () => timers.forEach((id) => window.clearTimeout(id));
+  }, [loading]);
 
   const handleNewChat = () => {
     setMessages([]);
@@ -408,6 +438,11 @@ export default function AiAssistantChatPage() {
     // Sending ends dictation; otherwise it would keep writing into the cleared box.
     voice.stop();
     setError("");
+    // Next dictation defaults to the script the user just wrote in, unless
+    // they picked a mic language themselves.
+    try {
+      if (!localStorage.getItem("mic-lang")) setMicLang(/[\u0D80-\u0DFF]/.test(question) ? "si" : "en");
+    } catch { /* storage blocked */ }
 
     if (!companyName.trim()) {
       setError("Company name not found. Please update your profile with your company name.");
@@ -604,49 +639,34 @@ export default function AiAssistantChatPage() {
 
         {/* Chat column */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* Header */}
-          <div
-            className="app-chrome shrink-0 px-4 py-3 sm:px-6"
-            style={{
-              background: "var(--surface)",
-              borderBottom: "1px solid var(--border)",
-              // The header is a flex child of a fixed-height shell, not a
-              // sticky/fixed element, so it cannot drift when the viewport
-              // changes. It only needs to clear the status area.
-              paddingTop: "calc(var(--safe-top) + 0.75rem)",
-            }}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <button
-                  onClick={() => setSidebarOpen(true)}
-                  className="-ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl lg:hidden"
-                  title={t.aiAssistantThreads}
-                  aria-label={t.aiAssistantThreads}
-                  style={{ color: "var(--text-2)" }}
-                >
-                  <span className="material-symbols-outlined text-[22px]">menu</span>
-                </button>
-                <div className="min-w-0">
-                  <h1 className="truncate text-[16px] font-extrabold text-[var(--text-1)]">{t.aiAssistant}</h1>
-                  <p className="truncate text-[11px] text-[var(--text-3)]">{companyName || "…"}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleNewChat}
-                  title={t.aiAssistantNewChat}
-                  aria-label={t.aiAssistantNewChat}
-                  className="flex h-11 w-11 items-center justify-center rounded-xl text-[12px] font-semibold transition hover:opacity-80 lg:hidden"
-                  style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
-                >
-                  <span className="material-symbols-outlined text-[16px]">add_comment</span>
-                </button>
-                <ThemeToggle />
-                <LanguageSwitcher />
-              </div>
-            </div>
-          </div>
+          {/* Header — the shared TopBar, in flow inside the fixed-height shell
+              (so it can't drift with the keyboard); it clears the status bar itself. */}
+          <TopBar
+            inShell
+            title={t.aiAssistant}
+            start={
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition hover:bg-[var(--surface-2)] lg:hidden"
+                title={t.aiAssistantThreads}
+                aria-label={t.aiAssistantThreads}
+                style={{ color: "var(--text-2)" }}
+              >
+                <span className="material-symbols-outlined text-[22px]">menu</span>
+              </button>
+            }
+            actions={
+              <button
+                onClick={handleNewChat}
+                title={t.aiAssistantNewChat}
+                aria-label={t.aiAssistantNewChat}
+                className="flex h-9 w-9 items-center justify-center rounded-xl transition hover:opacity-80 lg:hidden"
+                style={{ background: "var(--surface-2)", color: "var(--text-2)" }}
+              >
+                <span className="material-symbols-outlined text-[17px]">add_comment</span>
+              </button>
+            }
+          />
 
           {/* Messages */}
           <div ref={scrollRef} onScroll={handleScroll} className="app-scroll px-4 py-5 sm:px-6">
@@ -720,9 +740,37 @@ export default function AiAssistantChatPage() {
               )}
 
               {messages.length === 0 && !threadLoading && !docScope && (
-                <div className="rounded-2xl px-5 py-4 text-[14px] leading-6"
-                  style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-2)" }}>
-                  {t.aiAssistantGreeting}
+                <div className="space-y-3">
+                  <div className="rounded-2xl px-5 py-4 text-[14px] leading-6"
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-2)" }}>
+                    {t.aiAssistantGreeting}
+                    <p className="mt-1.5 text-[12px] text-[var(--text-3)]">
+                      {lang === "si"
+                        ? "ඉංග්‍රීසි, සිංහල හෝ Singlish ඕනෑම භාෂාවකින් අසන්න — ඔබ අසන භාෂාවෙන්ම පිළිතුරු ලැබේ."
+                        : "Ask in English, සිංහල or Singlish — I'll reply in the language you use."}
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[
+                      { tag: "EN", q: "How much do customers still owe me?" },
+                      { tag: "සි", q: "මේ මාසයේ මගේ වියදම් කීයද?" },
+                      { tag: "Singlish", q: "mata suppliersla ta gewanna thiyena ganan kiyada?" },
+                      { tag: "EN", q: "Help me plan next month's budget" },
+                    ].map((s) => (
+                      <button
+                        key={s.q}
+                        onClick={() => handleSend(s.q)}
+                        disabled={loading}
+                        className="group flex items-center gap-3 rounded-2xl px-4 py-3 text-left text-[13px] transition hover:-translate-y-px disabled:opacity-50"
+                        style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+                      >
+                        <span className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                          style={{ background: "var(--brand-tint)", color: "var(--brand-mid)" }}>{s.tag}</span>
+                        <span className="min-w-0 flex-1">{s.q}</span>
+                        <span className="material-symbols-outlined text-[16px] text-[var(--text-3)] transition group-hover:translate-x-0.5">arrow_forward</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -873,7 +921,23 @@ export default function AiAssistantChatPage() {
 
               {loading && (
                 <div className="flex justify-start">
-                  <TypingIndicator lang={lang} />
+                  <div className="flex items-center gap-2 rounded-2xl px-4 py-3 text-[13px]"
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text-3)" }}>
+                    <span className="flex items-center gap-1" aria-hidden="true">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </span>
+                    {(() => {
+                      // Follow the language of the question being answered.
+                      const last = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+                      const si = /[\u0D80-\u0DFF]/.test(last) || (!/[A-Za-z]/.test(last) && lang === "si");
+                      const steps = si
+                        ? ["ඔබේ ප්‍රශ්නය කියවමින්…", "ඔබේ ලේඛන පරීක්ෂා කරමින්…", "සංඛ්‍යා ගණනය කරමින්…", "පිළිතුර සකස් කරමින්…", "තව මොහොතක්…"]
+                        : ["Reading your question…", "Checking your documents…", "Calculating the figures…", "Writing your answer…", "Almost there…"];
+                      return <span key={loadingStage} className="rise-in">{steps[Math.min(loadingStage, steps.length - 1)]}</span>;
+                    })()}
+                  </div>
                 </div>
               )}
 
@@ -904,27 +968,39 @@ export default function AiAssistantChatPage() {
                 </div>
               )}
               {isListening && (
-                <div className="mb-2 flex items-center gap-2 text-[12px] text-red-600">
+                <div className="mb-2 flex items-center gap-2 text-[12px] text-red-600" role="status">
                   <span className="material-symbols-outlined text-[14px] animate-pulse">mic</span>
-                  {t.listeningMsg}
+                  {micLang === "si" ? "සිංහලෙන් අසමින්… (නැවැත්වීමට මයික් එක ඔබන්න)" : "Listening in English… (tap the mic to stop)"}
                 </div>
               )}
               <div className="flex items-end gap-2 rounded-2xl px-2 py-2"
                 style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
-                <button onClick={handleVoice} title={t.voiceInput}
-                  aria-label={t.voiceInput} aria-pressed={isListening}
-                  className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition hover:opacity-70"
-                  style={{
-                    color: isListening ? "#dc2626" : "var(--text-3)",
-                    background: isListening ? "rgba(220,38,38,0.1)" : "transparent",
-                  }}>
-                  {/* Pulsing ring while recording, so it's obvious the mic is live */}
-                  {isListening && (
-                    <span className="absolute inset-0 animate-ping rounded-xl" aria-hidden="true"
-                      style={{ background: "rgba(220,38,38,0.25)" }} />
-                  )}
-                  <span className="material-symbols-outlined relative text-[19px]">{isListening ? "stop_circle" : "mic"}</span>
-                </button>
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <button onClick={handleVoice}
+                    title={isListening ? (lang === "si" ? "නවත්වන්න" : "Stop") : t.voiceInput}
+                    aria-label={isListening ? (lang === "si" ? "නවත්වන්න" : "Stop voice input") : t.voiceInput}
+                    aria-pressed={isListening}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition hover:opacity-80 ${isListening ? "animate-pulse" : ""}`}
+                    style={isListening ? { color: "#fff", background: "#dc2626" } : { color: "var(--text-3)" }}>
+                    <span className="material-symbols-outlined text-[19px]">{isListening ? "stop" : "mic"}</span>
+                  </button>
+                  {/* Which language the mic listens in (independent of the UI toggle). */}
+                  <div className="flex h-7 items-center rounded-lg p-0.5" role="radiogroup"
+                    aria-label={lang === "si" ? "හඬ ආදාන භාෂාව" : "Voice input language"}
+                    style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                    {(["en", "si"] as const).map((code) => (
+                      <button key={code} role="radio" aria-checked={micLang === code}
+                        onClick={() => chooseMicLang(code)}
+                        title={code === "en" ? "Speak in English" : "සිංහලෙන් කතා කරන්න"}
+                        className="h-6 rounded-md px-1.5 text-[10px] font-bold transition"
+                        style={micLang === code
+                          ? { background: "var(--brand-mid)", color: "#fff" }
+                          : { color: "var(--text-3)" }}>
+                        {code === "en" ? "EN" : "සි"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <textarea
                   ref={textareaRef}
                   value={input}
