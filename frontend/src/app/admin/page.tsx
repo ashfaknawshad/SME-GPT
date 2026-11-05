@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
+import TopBar from "@/components/layout/TopBar";
+import PageHeading from "@/components/layout/PageHeading";
 import { getSession } from "@/lib/auth";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 
@@ -118,13 +119,9 @@ export default function AdminPage() {
   return (
     <MobileShell>
       <div className="pad-nav" style={{ background: "var(--bg)" }}>
-        <main className="mx-auto w-full max-w-[900px] px-4 py-6 sm:px-6">
-          <div className="mb-5 flex items-center justify-between gap-3">
-            <h1 className="text-[22px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[26px]">
-              {t.adminPanel}
-            </h1>
-            <LanguageSwitcher />
-          </div>
+        <TopBar title={t.adminPanel} />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <PageHeading title={t.adminPanel} />
 
           <div className="mb-5 flex gap-2">
             <button

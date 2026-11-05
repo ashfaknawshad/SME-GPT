@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
+import TopBar from "@/components/layout/TopBar";
 import ProvenancePanel, { type ArithmeticJson } from "@/components/ui/ProvenancePanel";
 import BboxOverlayViewer from "@/components/ui/BboxOverlayViewer";
 import OrderTimeline from "@/components/ui/OrderTimeline";
@@ -37,6 +37,7 @@ type DocumentDetail = {
   status: string;
   language: string;
   order_id: string;
+  po_ref?: string;
   po_reference?: string;
   flow_type: string;
   received_status: string;
@@ -278,7 +279,7 @@ export default function AnalysisDetailPage() {
           date: editedDocument.date,
           document_type: editedDocument.document_type,
           order_id: editedDocument.order_id,
-          po_reference: editedDocument.po_reference,
+          po_ref: editedDocument.po_ref,
           flow_type: editedDocument.flow_type,
           currency: editedDocument.currency,
           raw_total_amount: editedDocument.raw_total_amount,
@@ -331,6 +332,8 @@ export default function AnalysisDetailPage() {
   };
 
   const target = editedDocument || document;
+  // po_reference holds links saved before po_ref existed.
+  const linkedPo = [target?.po_ref, target?.po_reference].find((v) => v && v !== "NULL") || "";
     const handleDelete = async () => {
     if (!documentId) return;
 
@@ -385,19 +388,22 @@ export default function AnalysisDetailPage() {
   return (
     <MobileShell>
       <div className="pad-nav" style={{ background: "var(--bg)" }}>
-        <main className="mx-auto w-full max-w-[1180px] px-4 py-6 sm:px-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <button
-              onClick={() => router.back()}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--brand-mid)] transition hover:bg-[var(--brand-tint)]"
-            >
-              <span className="material-symbols-outlined">arrow_back</span>
-            </button>
+        <TopBar title={target?.document_id || "Document"} fallbackHref="/repository" />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          {/* Title on the left, document actions on the right (they wrap below on phones). */}
+          <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+            <div className="rise-in min-w-0">
+              <h1 className="break-words text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[30px]">
+                {loading ? "Loading..." : target?.document_id || "Document"}
+              </h1>
+              <p className="mt-1.5 text-[13px] leading-6 text-[var(--text-2)] sm:text-[14px]">
+                Financial Document Analysis
+              </p>
+            </div>
 
             {/* Action buttons wrap onto new rows on narrow screens instead of
                 overflowing past the edge (which forced the PWA to zoom out). */}
-            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
-  <LanguageSwitcher />
+            <div className="flex flex-wrap items-center gap-2 sm:flex-1 sm:justify-end">
 
   {!loading && target ? (
     <>
@@ -474,14 +480,6 @@ export default function AnalysisDetailPage() {
 </div>
           </div>
 
-          <div className="mb-5">
-            <h1 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[28px]">
-              {loading ? "Loading..." : target?.document_id || "Document"}
-            </h1>
-            <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--text-2)]">
-              Financial Document Analysis
-            </p>
-          </div>
 
           {/* Cross-document PO → DN → Invoice reconciliation (renders only when
               this document is part of a linked order). */}
@@ -491,6 +489,7 @@ export default function AnalysisDetailPage() {
               backendUrl={BACKEND_URL}
               lang={lang}
               refreshKey={orderRefresh}
+              documentType={String(target.document_type || "")}
             />
           )}
 
@@ -642,12 +641,12 @@ export default function AnalysisDetailPage() {
                         </span>{" "}
                         {editMode ? (
                           <input
-                            value={target.po_reference && target.po_reference !== "NULL" ? target.po_reference : ""}
-                            onChange={(e) => updateField("po_reference", e.target.value)}
+                            value={linkedPo}
+                            onChange={(e) => updateField("po_ref", e.target.value)}
                             placeholder="PO-2026-004"
                             className="ml-2 rounded border border-[var(--border)] px-2 py-1 text-[13px]"
                           />
-                        ) : (target.po_reference && target.po_reference !== "NULL" ? target.po_reference : "—")}
+                        ) : (linkedPo || "—")}
                         <br />
                       </>
                     )}

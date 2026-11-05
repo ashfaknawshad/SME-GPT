@@ -34,8 +34,23 @@ def get_checkpointer():
                 conninfo=database_url,
                 min_size=1,
                 max_size=3,
-                kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": None},
+                kwargs={
+                    "autocommit": True,
+                    "row_factory": dict_row,
+                    "prepare_threshold": None,
+                    "connect_timeout": 10,
+                    # Detect silently-dropped Supabase pooler connections fast.
+                    "keepalives": 1,
+                    "keepalives_idle": 15,
+                    "keepalives_interval": 5,
+                    "keepalives_count": 3,
+                },
                 open=True,
+                # Supabase's PgBouncer closes idle connections; without a
+                # liveness probe on checkout, the first /chat after an idle
+                # period got a dead connection and 500'd (same fix as db.py).
+                check=ConnectionPool.check_connection,
+                max_idle=float(os.getenv("DB_POOL_MAX_IDLE_SECS", "120")),
             )
             saver = PostgresSaver(pool)
             saver.setup()

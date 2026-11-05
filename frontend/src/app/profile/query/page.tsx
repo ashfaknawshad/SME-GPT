@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
+import TopBar from "@/components/layout/TopBar";
+import PageHeading from "@/components/layout/PageHeading";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { resolveBackendUrl } from "@/lib/backendUrl";
 
@@ -104,26 +105,12 @@ export default function QueryPage() {
   return (
     <MobileShell>
       <div className="pad-nav" style={{ background: "var(--bg)" }}>
-        <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-4 flex items-center justify-between">
-            <button
-              onClick={() => router.push("/")}
-              className="text-[14px] font-medium text-[var(--brand-mid)]"
-            >
-              ← Back
-            </button>
-            <div className="flex items-center gap-2">
-              <LanguageSwitcher />
-            </div>
-          </div>
-
-          <h1 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[28px]">
-            {t.askQuestion}
-          </h1>
-
-          <p className="mt-4 max-w-4xl text-[14px] leading-8 text-[var(--text-2)]">
-            Ask questions using only data from your saved financial documents.
-          </p>
+        <TopBar title={t.askQuestion} />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <PageHeading
+            title={t.askQuestion}
+            subtitle="Ask questions using only data from your saved financial documents."
+          />
 
           <div
             className="mt-6 rounded-[20px] p-5 shadow-sm"

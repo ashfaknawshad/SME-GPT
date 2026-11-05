@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
-import ThemeToggle from "@/components/layout/ThemeToggle";
+import TopBar from "@/components/layout/TopBar";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { addNotification } from "@/lib/notifications";
 import { getSession } from "@/lib/auth";
@@ -22,12 +21,14 @@ type PreviewItem = {
 };
 
 type PreviewData = {
-  document_type: string; order_id: string; po_reference?: string; flow_type: string;
+  document_type: string; order_id: string; po_ref?: string; flow_type: string;
   company_name: string; supplier_name: string; date: string;
   currency: string; raw_total_amount: string | number;
   final_total_amount: string | number; payable_amount: string | number;
   cash_return: string | number; received_status: string;
   paid_status: string; items: PreviewItem[];
+  tax_amount?: string | number;
+  tax_rate?: string | number;
 };
 
 type StreamEvent = {
@@ -42,7 +43,6 @@ type StreamEvent = {
 type UploadDraft = {
   sessionId: string;
   preview: PreviewData;
-  finalTotalEdited?: boolean;
 };
 
 const BACKEND_URL = resolveBackendUrl();
@@ -131,7 +131,7 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
   if (docType === "dn") return [
     { key: "document_type",   label: "Document Type",          opts: DOC_TYPE_OPTS },
     { key: "order_id",        label: "DN Number"               },
-    { key: "po_reference",    label: "PO Reference (links to PO)" },
+    { key: "po_ref",    label: "PO Reference (links to PO)" },
     { key: "company_name",    label: "Your Company",           readonly: true },
     { key: "supplier_name",   label: supplierLabel             },
     { key: "date",            label: "Delivery Date"           },
@@ -145,7 +145,9 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
     { key: "supplier_name",      label: supplierLabel          },
     { key: "date",               label: "Order Date"           },
     { key: "currency",           label: "Currency"             },
-    { key: "final_total_amount", label: "Order Total"          },
+    { key: "tax_rate",           label: "Tax Rate (%)"         },
+    { key: "tax_amount",         label: "Tax Amount"           },
+    { key: "final_total_amount", label: "Order Total (items + tax)", readonly: true },
     { key: "paid_status",        label: "PO Status",           opts: PO_STATUS_OPTS },
   ];
 
@@ -154,14 +156,16 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
     { key: "document_type",      label: "Document Type",       opts: DOC_TYPE_OPTS },
     { key: "order_id",           label: "Reference / Bill No." },
     // Only an invoice can belong to a purchase order.
-    ...(docType === "invoice" ? [{ key: "po_reference", label: "PO Reference (links to PO)" }] : []),
+    ...(docType === "invoice" ? [{ key: "po_ref", label: "PO Reference (links to PO)" }] : []),
     { key: "flow_type",          label: "Flow Type",           opts: FLOW_TYPE_OPTS },
     { key: "company_name",       label: "Your Company",        readonly: true },
     { key: "supplier_name",      label: supplierLabel          },
     { key: "date",               label: "Date"                 },
     { key: "currency",           label: "Currency"             },
     { key: "raw_total_amount",   label: "Raw Total (OCR)",     readonly: true },
-    { key: "final_total_amount", label: "Final Total"          },
+    { key: "tax_rate",           label: "Tax Rate (%)"         },
+    { key: "tax_amount",         label: "Tax Amount"           },
+    { key: "final_total_amount", label: "Final Total (items + tax)", readonly: true },
     { key: "payable_amount",     label: "Payable / Receivable",readonly: true },
     { key: "cash_return",        label: "Cash Return"          },
     { key: "received_status",    label: "Received Status",     opts: RECEIVED_STATUS_OPTS },
@@ -185,15 +189,19 @@ export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  // True once the user manually edits the final total (e.g. to add tax / discount),
-  // so item-sum recalculation stops overwriting their value.
-  const [finalTotalEdited, setFinalTotalEdited] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [error, setError] = useState("");
   // After a successful save we show a "what next?" card instead of silently
   // resetting — lets the user query, view the doc, or keep uploading.
-  const [savedDoc, setSavedDoc] = useState<{ id: string; title: string } | null>(null);
+  const [savedDoc, setSavedDoc] = useState<{ id: string; title: string; linked?: string[] } | null>(null);
+  // "This looks like the invoice for PO-2026-041" — existing documents this one
+  // belongs with (POST /link-preview); ticked ones are linked on save.
+  type LinkCandidate = { document_id: string; document_type: string; number: string; supplier_name: string;
+    amount: number; currency: string; score: number; reasons: string[]; strong: boolean };
+  const [linkCands, setLinkCands] = useState<LinkCandidate[]>([]);
+  const [linkPicks, setLinkPicks] = useState<Set<string>>(new Set());
   const [uploadCount, setUploadCount] = useState(0);
 
   // Local object-URL for a visual thumbnail of the picked file (image or PDF),
@@ -239,20 +247,22 @@ export default function UploadPage() {
       const draft = JSON.parse(raw) as UploadDraft;
       if (!draft?.sessionId || !draft?.preview) throw new Error("incomplete draft");
       setSessionId(draft.sessionId);
-      setPreview(draft.preview);
-      setFinalTotalEdited(Boolean(draft.finalTotalEdited));
+      // Re-derive the total so a draft saved by an older build shows items + tax.
+      setPreview(recalculate(draft.preview));
       setDraftRestored(true);
     } catch {
       try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* private mode */ }
     }
+    // Mount-only restore; recalculate is a pure helper.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!preview || !sessionId) return;
     try {
-      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ sessionId, preview, finalTotalEdited }));
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ sessionId, preview }));
     } catch { /* quota / private mode — reload recovery is best-effort */ }
-  }, [preview, sessionId, finalTotalEdited]);
+  }, [preview, sessionId]);
 
   // Extraction in flight can't be recovered at all (the SSE stream dies with
   // the page), and an un-saved preview would at least cost the user a re-review
@@ -288,26 +298,59 @@ export default function UploadPage() {
     return Number.isFinite(n) ? n : 0;
   };
 
-  const recalculate = (p: PreviewData): PreviewData => {
-    const items = (p.items || []).map((item) => {
-      const q = parseAmt(item.quantity), u = parseAmt(item.unit_price);
-      return { ...item, line_total: q > 0 && u > 0 ? +(q * u).toFixed(2) : item.line_total };
-    });
-    // Once the user has manually set the final total (tax / discount), keep it —
-    // only the per-line totals are refreshed, not the document total.
-    if (finalTotalEdited) return { ...p, items };
-    const total = +(items.reduce((s, i) => s + parseAmt(i.line_total), 0)).toFixed(2);
-    return { ...p, items, final_total_amount: total, payable_amount: total };
+  // A blank / NULL quantity means one unit (e.g. a handwritten receipt line
+  // "Glue ... 110"); an explicit 0 stays 0.
+  const qtyOf = (v: string | number) => {
+    const s = String(v ?? "").trim();
+    return s === "" || s.toUpperCase() === "NULL" ? 1 : parseAmt(s);
   };
 
-  // Shared by the image and PDF inputs — both do the same reset-and-select.
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] || null;
+  // Final total is never typed in: it is always sum(qty x unit price) + tax.
+  // A tax rate (%) wins over a typed tax amount and recomputes it from the
+  // subtotal. DNs carry no amounts and are left as extracted.
+  const recalculate = (p: PreviewData): PreviewData => {
+    if (String(p.document_type || "").toLowerCase() === "dn") return p;
+    const items = (p.items || []).map((item) => {
+      const u = parseAmt(item.unit_price);
+      return { ...item, line_total: u > 0 ? +(qtyOf(item.quantity) * u).toFixed(2) : item.line_total };
+    });
+    const subtotal = items.reduce((s, i) => s + parseAmt(i.line_total), 0);
+    if (subtotal <= 0) return { ...p, items };  // no priced items: keep extracted total
+    const rate = parseAmt(p.tax_rate ?? 0);
+    const taxAmount = rate > 0 ? +(subtotal * rate / 100).toFixed(2) : Math.max(0, parseAmt(p.tax_amount ?? 0));
+    const total = +(subtotal + taxAmount).toFixed(2);
+    return {
+      ...p, items,
+      tax_amount: rate > 0 ? taxAmount : p.tax_amount,
+      final_total_amount: total, payable_amount: total,
+    };
+  };
+
+  // Shared by the image/PDF inputs and drag-and-drop — all do the same reset-and-select.
+  const selectFile = (f: File | null) => {
     setSelectedFile(f); setPreview(null); setError("");
     setSavedDoc(null); setSessionId(""); setShowDuplicateWarning(false);
     setShowAmountMismatch(false); clearDraft();
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    selectFile(e.target.files?.[0] || null);
     // Reset the input's value so picking the same file again still fires onChange.
     e.target.value = "";
+  };
+
+  const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (isProcessing) return;
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    if (!ACCEPTED_TYPES.includes(f.type)) {
+      setError(lang === "si" ? "PDF, JPG හෝ PNG ගොනුවක් පමණක් දමන්න." : "Please drop a PDF, JPG or PNG file.");
+      return;
+    }
+    selectFile(f);
   };
 
   const clearDraft = () => {
@@ -319,7 +362,6 @@ export default function UploadPage() {
     setPreview(null); setSelectedFile(null); setSessionId("");
     setShowDuplicateWarning(false); setDuplicateMessage(""); setExistingDocumentId("");
     setShowAmountMismatch(false); setError(""); setActiveStep(0);
-    setFinalTotalEdited(false);
     clearDraft();
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -414,10 +456,10 @@ export default function UploadPage() {
           if (event.stage === "error") throw new Error(event.message || "Processing failed.");
           if (typeof event.step === "number") setActiveStep(event.step);
           if (event.stage === "done") {
-            // Fresh document — start with the extracted total, not a prior override.
-            setFinalTotalEdited(false);
-            // Auto-fill company_name from user profile so it's always correct
-            const rawPreview = event.preview ?? null;
+            // Auto-fill company_name from user profile so it's always correct.
+            // Final total = items (qty x unit price) + tax (DNs left as extracted).
+            const extracted = event.preview ?? null;
+            const rawPreview = extracted ? recalculate(extracted) : extracted;
             if (rawPreview) {
               getSession().then(s => {
                 if (s?.companyName) {
@@ -441,6 +483,31 @@ export default function UploadPage() {
     }
   };
 
+  const previewKey = preview
+    ? JSON.stringify([preview.document_type, preview.supplier_name, preview.order_id, preview.final_total_amount,
+        preview.date, (preview.items || []).length])
+    : "";
+  useEffect(() => {
+    if (!preview) { setLinkCands([]); setLinkPicks(new Set()); return; }
+    const timer = window.setTimeout(() => {
+      fetch(`${BACKEND_URL}/link-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+        body: JSON.stringify({ preview }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d.success) return;
+          const cands: LinkCandidate[] = d.candidates || [];
+          setLinkCands(cands);
+          setLinkPicks(new Set(cands.filter((c) => c.strong).map((c) => c.document_id)));
+        })
+        .catch(() => {});
+    }, 600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewKey]);
+
   const handleSave = async (force = false) => {
     if (!preview || !sessionId) return;
     const token = getAuthToken();
@@ -450,12 +517,15 @@ export default function UploadPage() {
     // either the raw OCR total differs from the final, or the line items don't
     // add up to the final total. The user can still save anyway (e.g. when tax
     // or a discount explains the gap), but not by accident.
+    // The final total is derived, so items + tax always add up; the only check
+    // left is whether that sum matches the total OCR read off the paper.
+    const toSave = recalculate(preview);
     if (!force) {
-      const subtotal = (preview.items || []).reduce((s, i) => s + parseAmt(i.line_total), 0);
-      const finalT = parseAmt(preview.final_total_amount);
-      const itemsDiffer = (preview.items?.length ?? 0) > 0 && Math.abs(subtotal - finalT) > 0.01;
-      const rawDiffers = !finalTotalEdited && parseAmt(preview.raw_total_amount) !== finalT;
-      if (itemsDiffer || rawDiffers) { setShowAmountMismatch(true); return; }
+      const finalT = parseAmt(toSave.final_total_amount);
+      // Only when OCR actually read a raw total (NULL / blank isn't a mismatch).
+      const rawT = parseAmt(toSave.raw_total_amount);
+      const rawDiffers = rawT > 0 && finalT > 0 && Math.abs(rawT - finalT) > 0.01;
+      if (rawDiffers) { setShowAmountMismatch(true); return; }
     }
 
     setIsSaving(true); setError("");
@@ -465,7 +535,8 @@ export default function UploadPage() {
       const res = await fetch(`${BACKEND_URL}/confirm-save`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ session_id: sessionId, edited_preview: preview, force_save: force }),
+        body: JSON.stringify({ session_id: sessionId, edited_preview: toSave, force_save: force,
+          link_targets: Array.from(linkPicks) }),
         signal: controller.signal,
       });
       if (res.status === 401) { localStorage.removeItem("token"); router.push("/login"); return; }
@@ -502,8 +573,9 @@ export default function UploadPage() {
         type: "success",
       });
 
+      const linkedNumbers = linkCands.filter((c) => linkPicks.has(c.document_id)).map((c) => c.number || c.document_id);
       resetForm();
-      setSavedDoc({ id: docId, title: savedTitle });
+      setSavedDoc({ id: docId, title: savedTitle, linked: linkedNumbers });
       setUploadCount((c) => c + 1);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
@@ -558,36 +630,25 @@ export default function UploadPage() {
   return (
     <MobileShell>
       <div className="pad-nav" style={{ background: "var(--bg)" }}>
-        <main className="mx-auto w-full max-w-[960px] px-4 py-6 sm:px-6">
+        <TopBar title={t.uploadTitle} />
 
-          {/* Top bar */}
-          <div className="mb-5 flex items-center justify-between">
-            <button
-              onClick={() => router.push("/dashboard")}
-              className="flex items-center gap-1.5 text-[13px] font-semibold transition hover:opacity-75"
-              style={{ color: "var(--brand-mid)" }}
-            >
-              <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-              {t.backToDashboard}
-            </button>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => router.push("/manual-entry")}
-                className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-semibold transition hover:opacity-80"
-                style={{ background: "rgba(234,108,10,0.1)", color: "#ea6c0a" }}
-              >
-                <span className="material-symbols-outlined text-[15px]">edit_note</span>
-                {lang === "si" ? "අතින් ඇතුළත් කරන්න" : "Manual Entry"}
-              </button>
-              <ThemeToggle />
-              <LanguageSwitcher />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="rise-in mb-6 flex flex-wrap items-end justify-between gap-4">
+            <div className="min-w-0 max-w-3xl">
+              <h1 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[30px]">
+                {t.uploadTitle}
+              </h1>
+              <p className="mt-1.5 text-[13px] leading-6 text-[var(--text-2)] sm:text-[14px]">{t.uploadSubtitle}</p>
             </div>
+            <button
+              onClick={() => router.push("/manual-entry")}
+              className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13px] font-semibold transition hover:opacity-80"
+              style={{ background: "rgba(234,108,10,0.1)", color: "#ea6c0a", border: "1px solid rgba(234,108,10,0.2)" }}
+            >
+              <span className="material-symbols-outlined text-[17px]">edit_note</span>
+              {lang === "si" ? "අතින් ඇතුළත් කරන්න" : "Manual Entry"}
+            </button>
           </div>
-
-          <h1 className="text-[24px] font-extrabold tracking-tight text-[var(--text-1)] sm:text-[28px]">
-            {t.uploadTitle}
-          </h1>
-          <p className="mt-1.5 text-[13px] leading-6 text-[var(--text-2)]">{t.uploadSubtitle}</p>
 
           {/* Two inputs rather than one, each scoped to a single kind: on mobile a
               mixed image+PDF picker is confusing and often jumps straight to the
@@ -606,34 +667,44 @@ export default function UploadPage() {
             onChange={handleFileInputChange}
           />
 
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="min-w-0">
+
           {/* Drop zone */}
           <div
-            className="mt-6 rounded-2xl p-8 text-center"
+            onDragOver={(e) => { e.preventDefault(); if (!isProcessing) setIsDragging(true); }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false); }}
+            onDrop={handleDrop}
+            className="relative overflow-hidden rounded-3xl px-6 py-10 text-center transition-all sm:py-14"
             style={{
-              border: "2px dashed var(--brand-mid)",
-              background: "var(--surface)",
-              opacity: selectedFile ? 0.85 : 1,
+              border: `2px dashed ${isDragging ? "var(--brand-mid)" : "color-mix(in srgb, var(--brand-mid) 45%, var(--border))"}`,
+              background: isDragging
+                ? "var(--brand-tint)"
+                : "radial-gradient(ellipse at top, var(--brand-tint) 0%, var(--surface) 65%)",
+              opacity: selectedFile && !isDragging ? 0.9 : 1,
+              transform: isDragging ? "scale(1.005)" : undefined,
+              boxShadow: "var(--card-shadow)",
             }}
           >
             <div
-              className="mx-auto flex h-14 w-14 items-center justify-center rounded-full"
-              style={{ background: "var(--brand-tint)" }}
+              className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl shadow-sm sm:h-20 sm:w-20"
+              style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
             >
-              <span className="material-symbols-outlined text-[28px]" style={{ color: "var(--brand-mid)" }}>
+              <span className="material-symbols-outlined" style={{ color: "var(--brand-mid)", fontSize: 36 }}>
                 {selectedFile
                   ? selectedFile.type.includes("pdf") ? "picture_as_pdf" : "image"
                   : "upload_file"}
               </span>
             </div>
-            <h2 className="mt-4 text-[17px] font-bold text-[var(--text-1)]">
-              {selectedFile ? selectedFile.name : t.dragDrop}
+            <h2 className="mt-5 break-words text-[18px] font-extrabold text-[var(--text-1)] sm:text-[20px]">
+              {isDragging ? (lang === "si" ? "මෙහි අතහරින්න" : "Release to upload") : selectedFile ? selectedFile.name : t.dragDrop}
             </h2>
             <p className="mt-1 text-[13px] text-[var(--text-2)]">
               {selectedFile
                 ? `${(selectedFile.size / 1024).toFixed(0)} KB · Ready for OCR`
                 : t.maxFileSize}
             </p>
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-2 rounded-xl px-5 py-2.5 text-[13px] font-semibold transition hover:opacity-80"
@@ -737,22 +808,6 @@ export default function UploadPage() {
           {/* Processing indicator — step-by-step checklist driven by the backend's real step */}
           {isProcessing && <ScanProgress activeStep={activeStep} lang={lang} />}
 
-          {/* Enterprise Security banner */}
-          <div
-            className="mt-5 flex items-center gap-3 rounded-xl px-4 py-3"
-            style={{ background: "rgba(26,53,96,0.06)", border: "1px solid rgba(26,53,96,0.12)" }}
-          >
-            <span className="material-symbols-outlined text-[18px]" style={{ color: "var(--brand)" }}>
-              shield
-            </span>
-            <p className="text-[12px] text-[var(--text-2)]">
-              <span className="font-bold" style={{ color: "var(--brand)" }}>
-                {lang === "si" ? "ව්‍යාපාරික ආරක්ෂාව:" : "Enterprise Security:"}
-              </span>{" "}
-              {t.securityBanner}
-            </p>
-          </div>
-
           {error && (
             <div className="mt-5 rounded-xl px-4 py-3 text-[13px] text-red-600"
               style={{ background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.2)" }}>
@@ -781,6 +836,13 @@ export default function UploadPage() {
                 <span className="font-semibold text-[var(--text-1)]">{savedDoc.title}</span>
                 <span className="text-[var(--text-3)]"> · {savedDoc.id}</span>
               </p>
+              {savedDoc.linked && savedDoc.linked.length > 0 && (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-semibold"
+                  style={{ background: "var(--brand-tint)", color: "var(--brand-mid)" }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 15 }}>link</span>
+                  {lang === "si" ? "සම්බන්ධ කළා: " : "Linked to "}{savedDoc.linked.join(", ")}
+                </p>
+              )}
 
               <div className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
                 {/* Scope the chat to the document just saved (same contract as
@@ -831,9 +893,10 @@ export default function UploadPage() {
             <button
               onClick={handleProcess}
               disabled={!selectedFile || isProcessing}
-              className="mt-6 w-full rounded-2xl py-4 text-[15px] font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-              style={{ background: "var(--brand)" }}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-[15px] font-bold text-white shadow-md transition hover:-translate-y-px hover:shadow-lg disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
+              style={{ background: "linear-gradient(125deg, var(--hero-from) 0%, var(--hero-to) 100%)" }}
             >
+              <span className="material-symbols-outlined text-[20px]">{isProcessing ? "progress_activity" : "auto_awesome"}</span>
               {isProcessing ? friendlyProgress : t.beginExtraction}
             </button>
           )}
@@ -878,7 +941,7 @@ export default function UploadPage() {
 
           {/* Preview */}
           {preview && (
-            <div ref={previewRef} className="mt-8 rounded-2xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <div ref={previewRef} className="ui-card mt-8 p-5 sm:p-6">
               <h2 className="text-[19px] font-extrabold text-[var(--text-1)]">{t.extractedPreview}</h2>
               <p className="mt-1 text-[13px] text-[var(--text-2)]">{t.reviewBeforeSaving}</p>
 
@@ -892,9 +955,10 @@ export default function UploadPage() {
                 />
               )}
 
-              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                 {getFieldRows(String(preview.document_type || ""), String(preview.flow_type || "")).map((row) => {
-                  const val = String((preview as Record<string, unknown>)[row.key] ?? "");
+                  const rawVal = String((preview as Record<string, unknown>)[row.key] ?? "");
+                  const val = (row.key === "tax_rate" || row.key === "tax_amount") && rawVal.toUpperCase() === "NULL" ? "" : rawVal;
                   return (
                     <div key={row.key}>
                       <p className="mb-1.5 text-[12px] font-semibold text-[var(--text-2)]">{row.label}</p>
@@ -928,10 +992,12 @@ export default function UploadPage() {
                           onChange={(e) => {
                             if (row.readonly) return;
                             const v = e.target.value;
-                            if (row.key === "final_total_amount") {
-                              // Manual total wins over the item subtotal; payable mirrors it.
-                              setFinalTotalEdited(true);
-                              setPreview({ ...preview, final_total_amount: v, payable_amount: v });
+                            if (row.key === "tax_rate") {
+                              // Rate drives the tax amount; total follows.
+                              setPreview(recalculate({ ...preview, tax_rate: v }));
+                            } else if (row.key === "tax_amount") {
+                              // A typed tax amount replaces any rate.
+                              setPreview(recalculate({ ...preview, tax_amount: v, tax_rate: "" }));
                             } else {
                               setPreview({ ...preview, [row.key]: v });
                             }
@@ -964,7 +1030,8 @@ export default function UploadPage() {
                               const next = { ...preview, items };
                               setPreview(f === "quantity" || f === "unit_price" ? recalculate(next) : next);
                             }}
-                            placeholder={f.replace("_", " ")}
+                            placeholder={f === "quantity" ? "qty" : f.replace("_", " ")}
+                            title={f === "quantity" ? "Quantity" : f === "unit_price" ? "Unit price" : "Description"}
                             className="field-input rounded-xl border px-3 py-2 text-[13px] transition"
                           />
                         ))}
@@ -974,11 +1041,58 @@ export default function UploadPage() {
                 </div>
               )}
 
+              {/* Belongs with: PO / delivery note / invoice this document is part of */}
+              {linkCands.length > 0 && (
+                <div className="mt-6 rounded-2xl p-4" style={{ background: "var(--brand-tint)", border: "1px dashed var(--brand-mid)" }}>
+                  <p className="flex items-center gap-2 text-[13px] font-bold text-[var(--text-1)]">
+                    <span className="material-symbols-outlined" style={{ fontSize: 18, color: "var(--brand-mid)" }}>account_tree</span>
+                    {lang === "si" ? "මෙම ලේඛනය අයත් විය හැකි ඇණවුම" : "This document seems to belong with"}
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {linkCands.map((c) => {
+                      const TYPE: Record<string, [string, string]> = {
+                        po: ["purchase order", "මිලදී ගැනීමේ ඇණවුම"], dn: ["delivery note", "බෙදාහැරීමේ සටහන"],
+                        invoice: ["invoice", "ඉන්වොයිසිය"], receipt: ["receipt", "රිසිට්පත"],
+                      };
+                      const mine = String(preview.document_type || "").toLowerCase();
+                      const t = TYPE[c.document_type] ?? ["document", "ලේඛනය"];
+                      const me = TYPE[mine] ?? ["document", "ලේඛනය"];
+                      const checked = linkPicks.has(c.document_id);
+                      return (
+                        <label key={c.document_id} className="flex cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 transition"
+                          style={{ background: "var(--surface)", border: `1px solid ${checked ? "var(--brand-mid)" : "var(--border)"}` }}>
+                          <input type="checkbox" checked={checked} className="mt-1 h-4 w-4 accent-[var(--brand-mid)]"
+                            onChange={() => setLinkPicks((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(c.document_id)) next.delete(c.document_id); else next.add(c.document_id);
+                              return next;
+                            })} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[13px] font-semibold text-[var(--text-1)]">
+                              {lang === "si"
+                                ? `මෙය ${c.number || c.document_id} (${t[1]}) සඳහා වන ${me[1]} ලෙස පෙනේ`
+                                : `This looks like the ${me[0]} for ${t[0]} ${c.number || c.document_id}`}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] text-[var(--text-3)]">
+                              {Math.round(c.score * 100)}% {lang === "si" ? "ගැළපීම" : "match"} · {c.reasons.join(" · ")}
+                              {c.supplier_name ? ` · ${c.supplier_name}` : ""}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-[11px] text-[var(--text-3)]">
+                    {lang === "si" ? "සලකුණු කළ ඒවා සුරැකීමේදී සම්බන්ධ කෙරේ." : "Ticked documents are linked when you save."}
+                  </p>
+                </div>
+              )}
+
               {/* Totals-don't-reconcile warning */}
               {showAmountMismatch && (() => {
                 const cur = preview.currency && preview.currency !== "NULL" ? `${preview.currency} ` : "";
-                const subtotal = (preview.items || []).reduce((s, i) => s + parseAmt(i.line_total), 0);
-                const finalT = parseAmt(preview.final_total_amount);
+                const subtotal = parseAmt(preview.raw_total_amount);  // total printed on the paper
+                const finalT = parseAmt(recalculate(preview).final_total_amount);
                 return (
                   <div className="mt-6 rounded-xl p-4 text-[13px]"
                     style={{ background: "var(--warn-tint)", border: "1px solid var(--warn-border)", color: "var(--warn)" }}>
@@ -1028,6 +1142,113 @@ export default function UploadPage() {
               </button>
             </div>
           )}
+          </div>
+
+          {/* ── Guide column ──────────────────────────────────────── */}
+          <aside className="grid content-start gap-4 md:grid-cols-2 xl:grid-cols-1">
+            {/* Live progress */}
+            <div className="ui-card p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--text-3)]">
+                {lang === "si" ? "එය ක්‍රියා කරන ආකාරය" : "How it works"}
+              </p>
+              <ol className="mt-4 space-y-1">
+                {[
+                  { icon: "upload_file", en: "Add your document", si: "ලේඛනය එක් කරන්න",
+                    den: "Photo, scan or PDF — English or Sinhala", dsi: "ඡායාරූපය, ස්කෑන් හෝ PDF",
+                    done: !!selectedFile || !!preview || !!savedDoc, active: !selectedFile && !preview && !savedDoc },
+                  { icon: "document_scanner", en: "AI reads it", si: "AI එය කියවයි",
+                    den: "OCR + extraction of parties, items and totals", dsi: "පාර්ශ්ව, අයිතම සහ එකතුව උකහා ගැනීම",
+                    done: !!preview || !!savedDoc, active: isProcessing },
+                  { icon: "fact_check", en: "Review & save", si: "සමාලෝචනය කර සුරකින්න",
+                    den: "Check the fields, then confirm", dsi: "ක්ෂේත්‍ර පරීක්ෂා කර තහවුරු කරන්න",
+                    done: !!savedDoc, active: !!preview && !savedDoc },
+                ].map((step, i, arr) => (
+                  <li key={step.icon} className="relative flex gap-3 pb-4 last:pb-0">
+                    {i < arr.length - 1 && (
+                      <span className="absolute left-[17px] top-10 h-[calc(100%-2.75rem)] w-[2px] rounded-full"
+                        style={{ background: step.done ? "#16a34a" : "var(--border)" }} aria-hidden />
+                    )}
+                    <span
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${step.active ? "ring-4" : ""}`}
+                      style={{
+                        background: step.done ? "#16a34a" : step.active ? "var(--brand-mid)" : "var(--surface-2)",
+                        color: step.done || step.active ? "#fff" : "var(--text-3)",
+                        ["--tw-ring-color" as string]: "var(--brand-ring)",
+                      }}
+                    >
+                      <span className={`material-symbols-outlined text-[18px] ${step.active && isProcessing && i === 1 ? "animate-pulse" : ""}`}>
+                        {step.done ? "check" : step.icon}
+                      </span>
+                    </span>
+                    <div className="min-w-0 pt-1">
+                      <p className="text-[13px] font-bold" style={{ color: step.active ? "var(--brand-mid)" : "var(--text-1)" }}>
+                        {lang === "si" ? step.si : step.en}
+                      </p>
+                      <p className="mt-0.5 text-[12px] leading-5 text-[var(--text-3)]">{lang === "si" ? step.dsi : step.den}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            {/* Supported types */}
+            <div className="ui-card p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--text-3)]">
+                {lang === "si" ? "සහාය දක්වන ලේඛන" : "Supported documents"}
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {[
+                  { icon: "description",    color: "var(--brand-mid)", en: "Invoices",        si: "ඉන්වොයිස්" },
+                  { icon: "receipt_long",   color: "#16a34a",          en: "Receipts",        si: "රිසිට්" },
+                  { icon: "shopping_cart",  color: "#7c3aed",          en: "Purchase Orders", si: "මිලදී ඇණවුම්" },
+                  { icon: "local_shipping", color: "#ea6c0a",          en: "Delivery Notes",  si: "බෙදාහැරීම් සටහන්" },
+                ].map((d) => (
+                  <div key={d.icon} className="flex items-center gap-2 rounded-xl px-3 py-2.5"
+                    style={{ background: `color-mix(in srgb, ${d.color} 9%, transparent)` }}>
+                    <span className="material-symbols-outlined text-[18px]" style={{ color: d.color }}>{d.icon}</span>
+                    <span className="truncate text-[12px] font-semibold text-[var(--text-1)]">{lang === "si" ? d.si : d.en}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Tips */}
+            <div className="ui-card p-5">
+              <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--text-3)]">
+                {lang === "si" ? "හොඳම ප්‍රතිඵල සඳහා" : "Tips for best results"}
+              </p>
+              <ul className="mt-3 space-y-2.5">
+                {[
+                  { icon: "light_mode", en: "Shoot in good light, without shadows", si: "හොඳ ආලෝකයේ, සෙවනැලි නැතිව ගන්න" },
+                  { icon: "crop_free",  en: "Keep the whole page inside the frame",  si: "මුළු පිටුවම රාමුව තුළ තබන්න" },
+                  { icon: "straighten", en: "Hold the camera flat above the bill",   si: "කැමරාව බිල්පතට ඉහළින් සමතලව අල්ලන්න" },
+                ].map((tip) => (
+                  <li key={tip.icon} className="flex items-start gap-2.5 text-[12px] leading-5 text-[var(--text-2)]">
+                    <span className="material-symbols-outlined mt-px text-[17px]" style={{ color: "var(--brand-mid)" }}>{tip.icon}</span>
+                    {lang === "si" ? tip.si : tip.en}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Enterprise Security banner */}
+            <div
+              className="flex items-start gap-3 rounded-[1.25rem] px-4 py-4"
+              style={{ background: "var(--brand-tint)", border: "1px solid var(--border)" }}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl" style={{ background: "var(--surface)", color: "var(--brand-mid)" }}>
+                <span className="material-symbols-outlined text-[19px]">shield_lock</span>
+              </span>
+              <p className="text-[12px] leading-5 text-[var(--text-2)]">
+                <span className="block font-bold text-[var(--text-1)]">
+                  {lang === "si" ? "ව්‍යාපාරික ආරක්ෂාව" : "Enterprise Security"}
+                </span>
+                {/* The translated string already opens with this label — don't print it twice. */}
+                {t.securityBanner.replace(/^\s*(Enterprise Security|ව්‍යාපාරික ආරක්ෂාව)\s*:\s*/, "")}
+              </p>
+            </div>
+          </aside>
+          </div>
         </main>
 
         <BottomNav />

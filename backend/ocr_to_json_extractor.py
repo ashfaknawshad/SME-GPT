@@ -213,6 +213,12 @@ def normalize_supplier_name(value: str, flow_type: str = "", document_type: str 
     return text
 
 
+def _clean_ref(value) -> str:
+    """A reference number as printed, minus the placeholder values LLMs emit."""
+    text = str(value or "").strip()
+    return "" if text.upper() in ("", "NULL", "NONE", "N/A", "NA", "-") else text
+
+
 def normalize_root_fields(parsed: dict, source_text: str) -> dict:
     if not isinstance(parsed, dict):
         return {}
@@ -297,18 +303,15 @@ def normalize_root_fields(parsed: dict, source_text: str) -> dict:
 
     _supplier_final = normalize_supplier_name(_ocr_supplier, flow_type, document_type)
 
-    # The PO a DN / invoice belongs to. Only those two types carry one, and a
-    # value equal to the document's own number is the LLM copying order_id.
-    _order_id = str(parsed.get("order_id", "")).strip()
-    _po_ref = str(parsed.get("po_reference", "") or "").strip()
-    if document_type not in ("dn", "invoice") or _po_ref.upper() in ("", "NULL", "NONE", _order_id.upper()):
-        _po_ref = ""
-
     return {
         "document_id": str(parsed.get("document_id", "")).strip(),
         "document_type": document_type,
-        "order_id": _order_id,
-        "po_reference": _po_ref,
+        "order_id": str(parsed.get("order_id", "")).strip(),
+        # Migration 012 — own number vs. references (document linking)
+        "doc_number": _clean_ref(parsed.get("doc_number")),
+        "po_ref": _clean_ref(parsed.get("po_ref")),
+        "dn_ref": _clean_ref(parsed.get("dn_ref")),
+        "invoice_ref": _clean_ref(parsed.get("invoice_ref")),
         "flow_type": flow_type,
         "company_name": _ocr_company,   # will be overridden in /confirm-save with user's company
         "supplier_name": _supplier_final,
@@ -357,7 +360,10 @@ Default currency to "LKR" if not stated.
   "document_id": "",
   "document_type": "unknown",
   "order_id": "",
-  "po_reference": "",
+  "doc_number": "",
+  "po_ref": "",
+  "dn_ref": "",
+  "invoice_ref": "",
   "flow_type": "unknown",
   "company_name": "",
   "supplier_name": "",
@@ -431,7 +437,7 @@ Total:               6,962.00
 Due Date: 12/04/2025
 
 Expected output:
-{"document_id":"","document_type":"invoice","order_id":"INV-2025-0891","flow_type":"payable","company_name":"Colombo Office Supplies (Pvt) Ltd","supplier_name":"Tech Solutions Lanka (Pvt) Ltd","date":"12/03/2025","currency":"LKR","raw_total_amount":"6962.00","final_total_amount":"6962.00","payable_amount":"6962.00","cash_return":"","tax_amount":"1062.00","tax_rate":"18","received_status":"","paid_status":"not_paid","due_date":"12/04/2025","delivery_date":"","approved_by":"","proof_of_delivery":null,"signed":null,"supplier_city":"Colombo 02","supplier_phone":"","supplier_email":"","company_city":"Colombo 03","company_phone":"0112-345678","company_email":"","items":[{"description":"A4 Paper (500 sheets)","quantity":"10","unit_price":"350.00","line_total":"3500.00"},{"description":"Whiteboard Markers","quantity":"5","unit_price":"180.00","line_total":"900.00"},{"description":"Stapler (Heavy Duty)","quantity":"2","unit_price":"750.00","line_total":"1500.00"}]}
+{"document_id":"","document_type":"invoice","order_id":"INV-2025-0891","doc_number":"INV-2025-0891","po_ref":"","dn_ref":"","invoice_ref":"","flow_type":"payable","company_name":"Colombo Office Supplies (Pvt) Ltd","supplier_name":"Tech Solutions Lanka (Pvt) Ltd","date":"12/03/2025","currency":"LKR","raw_total_amount":"6962.00","final_total_amount":"6962.00","payable_amount":"6962.00","cash_return":"","tax_amount":"1062.00","tax_rate":"18","received_status":"","paid_status":"not_paid","due_date":"12/04/2025","delivery_date":"","approved_by":"","proof_of_delivery":null,"signed":null,"supplier_city":"Colombo 02","supplier_phone":"","supplier_email":"","company_city":"Colombo 03","company_phone":"0112-345678","company_email":"","items":[{"description":"A4 Paper (500 sheets)","quantity":"10","unit_price":"350.00","line_total":"3500.00"},{"description":"Whiteboard Markers","quantity":"5","unit_price":"180.00","line_total":"900.00"},{"description":"Stapler (Heavy Duty)","quantity":"2","unit_price":"750.00","line_total":"1500.00"}]}
 
 === EXAMPLE 2: Sinhala Receipt (we paid cash — cash_outflow) ===
 OCR text:
@@ -453,7 +459,7 @@ OCR text:
 ශේෂය:   125.00
 
 Expected output:
-{"document_id":"","document_type":"receipt","order_id":"R-4521","flow_type":"cash_outflow","company_name":"ශ්‍රී ලංකා සුපිරි වෙළෙඳසැල","supplier_name":"","date":"25/05/2025","currency":"LKR","raw_total_amount":"875.00","final_total_amount":"875.00","payable_amount":"875.00","cash_return":"125.00","tax_amount":"","tax_rate":"","received_status":"","paid_status":"","due_date":"","delivery_date":"","approved_by":"","proof_of_delivery":null,"signed":null,"supplier_city":"කොළඹ 07","supplier_phone":"0112-678901","supplier_email":"","company_city":"","company_phone":"","company_email":"","items":[{"description":"සහල් (1kg)","quantity":"2","unit_price":"180","line_total":"360"},{"description":"කිරිපිටි (400g)","quantity":"1","unit_price":"420","line_total":"420"},{"description":"පාන් (සම්පූර්ණ)","quantity":"1","unit_price":"95","line_total":"95"}]}
+{"document_id":"","document_type":"receipt","order_id":"R-4521","doc_number":"R-4521","po_ref":"","dn_ref":"","invoice_ref":"","flow_type":"cash_outflow","company_name":"ශ්‍රී ලංකා සුපිරි වෙළෙඳසැල","supplier_name":"","date":"25/05/2025","currency":"LKR","raw_total_amount":"875.00","final_total_amount":"875.00","payable_amount":"875.00","cash_return":"125.00","tax_amount":"","tax_rate":"","received_status":"","paid_status":"","due_date":"","delivery_date":"","approved_by":"","proof_of_delivery":null,"signed":null,"supplier_city":"කොළඹ 07","supplier_phone":"0112-678901","supplier_email":"","company_city":"","company_phone":"","company_email":"","items":[{"description":"සහල් (1kg)","quantity":"2","unit_price":"180","line_total":"360"},{"description":"කිරිපිටි (400g)","quantity":"1","unit_price":"420","line_total":"420"},{"description":"පාන් (සම්පූර්ණ)","quantity":"1","unit_price":"95","line_total":"95"}]}
 
 === EXAMPLE 3: Purchase Order (we are ordering — payable) ===
 OCR text:
@@ -474,7 +480,7 @@ Approved by: Kasun Perera
 Delivery by: 15/06/2025
 
 Expected output:
-{"document_id":"","document_type":"po","order_id":"PO-2025-0234","flow_type":"payable","company_name":"AIESEC Sri Lanka","supplier_name":"Print Masters Lanka","date":"01/06/2025","currency":"LKR","raw_total_amount":"56000.00","final_total_amount":"56000.00","payable_amount":"56000.00","cash_return":"","tax_amount":"","tax_rate":"","received_status":"","paid_status":"not_paid","due_date":"","delivery_date":"15/06/2025","approved_by":"Kasun Perera","proof_of_delivery":null,"signed":null,"supplier_city":"Colombo 09","supplier_phone":"","supplier_email":"","company_city":"Nugegoda","company_phone":"","company_email":"","items":[{"description":"Event Banners 6x4ft","quantity":"10","unit_price":"3500.00","line_total":"35000.00"},{"description":"Brochures A5 (500 pcs)","quantity":"5","unit_price":"4200.00","line_total":"21000.00"}]}
+{"document_id":"","document_type":"po","order_id":"PO-2025-0234","doc_number":"PO-2025-0234","po_ref":"","dn_ref":"","invoice_ref":"","flow_type":"payable","company_name":"AIESEC Sri Lanka","supplier_name":"Print Masters Lanka","date":"01/06/2025","currency":"LKR","raw_total_amount":"56000.00","final_total_amount":"56000.00","payable_amount":"56000.00","cash_return":"","tax_amount":"","tax_rate":"","received_status":"","paid_status":"not_paid","due_date":"","delivery_date":"15/06/2025","approved_by":"Kasun Perera","proof_of_delivery":null,"signed":null,"supplier_city":"Colombo 09","supplier_phone":"","supplier_email":"","company_city":"Nugegoda","company_phone":"","company_email":"","items":[{"description":"Event Banners 6x4ft","quantity":"10","unit_price":"3500.00","line_total":"35000.00"},{"description":"Brochures A5 (500 pcs)","quantity":"5","unit_price":"4200.00","line_total":"21000.00"}]}
 '''
 
 
@@ -532,12 +538,38 @@ LINE ITEMS — extract EVERY row:
   has both a unit price and a total, line_total = quantity × unit_price
   (e.g. qty 2, ඒකක මිල 220.00, මුළු මිල 440.00 → unit_price "220.00", line_total "440.00")
 - If a receipt has only price and total (no qty column): set quantity="1"
+- If a row shows only ONE amount (no qty column): quantity="1", unit_price = line_total = that amount
 - Preserve Sinhala item names exactly
+
+HANDWRITTEN / SIMPLE RECEIPTS (amounts written beside item names, no columns):
+- OCR reads each line by height, so an item's amount (written on the right)
+  often appears on the line JUST BEFORE its name, not after. Pair each item
+  name with the amount on the SAME row: if the text starts with an amount
+  before the first item name, amounts come BEFORE their names.
+- "/=" after a number means rupees (e.g. "80/=" = 80). OCR often misreads it
+  as "/2", "/-", ".w", "� w", "Co", ".a" — these are NOT digits: "240/2" = 240.
+- The LAST amount (often under a line, or circled) that equals the sum of the
+  item amounts is the TOTAL → final_total_amount, NOT an item.
+- Rubber-stamp / letterhead text (e.g. "PHOTO COPY SERVICE", "UNIVERSITY OF
+  ...") is the shop's name, NOT an item — never make it an item row.
+- Check: the item amounts must add up to the total. If they do not, re-pair
+  amounts with names before answering.
+  Example OCR: "80 w / Bristel board / 110.00 / glue / 50 Co / paper Cutter /
+  240/2 / PHOTO COPY SERVICE / 240 a"
+  → items: Bristel board 80, glue 110, paper Cutter 50; final_total_amount 240;
+    supplier_name "PHOTO COPY SERVICE"
 
 TAX — only extract what is EXPLICITLY printed:
 - tax_amount: actual rupee amount (e.g. "VAT: 1,062.00" → "1062.00")
 - tax_rate: percentage printed (e.g. "VAT 18%" → "18")
 - Do NOT calculate tax from subtotal
+
+REFERENCE NUMBERS (used to connect PO -> Delivery Note -> Invoice -> Receipt; copy exactly as printed, "" if absent):
+- doc_number: THIS document's own number (Invoice No / Inv # / PO No on a purchase order / DN No / Delivery Note No / Receipt No / Bill No / ඉන්වොයිස් අංකය / රිසිට් අංකය)
+- po_ref: the PURCHASE ORDER this document refers to, printed on a delivery note, invoice or receipt (PO No / P.O. # / Your Order No / Order Ref / Purchase Order / ඇණවුම් අංකය). Never copy doc_number here.
+- dn_ref: the DELIVERY NOTE an invoice bills for (DN No / Delivery Note No / GRN / Dispatch No)
+- invoice_ref: the INVOICE a receipt or payment settles (Invoice No / Inv Ref / Against Invoice / Bill No being paid)
+- order_id: keep filling as before (the main order/reference number shown)
 
 WORKFLOW FIELDS (extract only if explicitly printed, use "" or null otherwise):
 - due_date: payment due date (e.g. "Due Date: 30/04/2025")
@@ -545,15 +577,6 @@ WORKFLOW FIELDS (extract only if explicitly printed, use "" or null otherwise):
 - approved_by: name of approver (e.g. "Approved by: Kasun Perera")
 - proof_of_delivery: true if there is a "Received By" / signature section, false if signature box is blank, null if unknown
 - signed: true if a signature is present, false if blank, null if unknown
-
-DOCUMENT NUMBERS — two different fields, never mix them up:
-- order_id: THIS document's own number (Invoice No / Bill No / Receipt No / DN No / PO Number / බිල් අංකය).
-- po_reference: the PURCHASE ORDER number this document refers to, ONLY on a delivery note or invoice,
-  and ONLY if printed (labels: PO No / P.O. No / PO Ref / Order No / Your Order / Customer PO / ඇණවුම් අංකය).
-  Copy it exactly as printed (e.g. "PO-2026-004"). For a PO itself, receipts, or when no PO number
-  is printed, use "". Never copy order_id into po_reference.
-  e.g. a delivery note showing "DN No: DN-0042" and "PO No: PO-2026-004"
-       → order_id "DN-0042", po_reference "PO-2026-004"
 
 CONTACT FIELDS (extract only if visible in the document):
 - company_city: city of the issuer (top of document)
@@ -578,7 +601,10 @@ Return ONLY the JSON object matching this structure (no extra text):
   "document_id": "",
   "document_type": "unknown",
   "order_id": "",
-  "po_reference": "",
+  "doc_number": "",
+  "po_ref": "",
+  "dn_ref": "",
+  "invoice_ref": "",
   "flow_type": "unknown",
   "company_name": "",
   "supplier_name": "",
@@ -609,6 +635,34 @@ Return ONLY the JSON object matching this structure (no extra text):
 }}"""
 
 
+UNKNOWN_VALUE = "unknown"
+
+
+def replace_meta_replies_with_unknown(record: dict) -> dict:
+    """A value the OCR/LLM read is kept as-is (even if it's a guess). But when
+    the LLM couldn't read a value and wrote commentary into the field instead
+    ("I don't see any document text... please paste the OCR text"), store
+    "unknown" rather than that sentence."""
+    from llm_correction import looks_like_llm_meta_reply
+
+    def _clean(value):
+        if isinstance(value, str) and value.strip() and looks_like_llm_meta_reply("", value):
+            return UNKNOWN_VALUE
+        return value
+
+    if not isinstance(record, dict):
+        return record
+    for key, value in list(record.items()):
+        if key == "items" and isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    for k in list(item):
+                        item[k] = _clean(item[k])
+        else:
+            record[key] = _clean(value)
+    return record
+
+
 def extract_structured_json_from_text(raw_text: str, doc_type_hint: str = "") -> dict:
     cleaned_text = clean_ocr_text(raw_text)
 
@@ -632,4 +686,4 @@ def extract_structured_json_from_text(raw_text: str, doc_type_hint: str = "") ->
             f"Problematic JSON preview:\n{cleaned_json_block[:1500]}"
         )
 
-    return normalize_root_fields(parsed, cleaned_text)
+    return replace_meta_replies_with_unknown(normalize_root_fields(parsed, cleaned_text))

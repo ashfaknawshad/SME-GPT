@@ -214,32 +214,21 @@ def index_document(doc: dict, tenant_id: str) -> dict:
             )
             link_count += 1
 
-        # Cross-document edge to every document in the same purchase order,
-        # linked the way order reconciliation links them (a DN / invoice via
-        # the PO number it references, a PO via its own number).
-        from order_reconciliation import link_key
-
-        order_key = link_key(doc)
-        if order_key:
+        # Cross-document edge via shared order_id
+        order_id = order_id_raw.strip()
+        if order_id and order_id.upper() not in ("NULL", "NONE", ""):
             cur = conn.cursor()
             cur.execute(
-                'SELECT * FROM "FinancialDocument"'
-                ' WHERE "tenantId"=%s AND "documentId"!=%s AND "deletedAt" IS NULL',
-                (tenant_id, doc_id),
+                'SELECT "documentId" FROM "FinancialDocument"'
+                ' WHERE "tenantId"=%s AND "orderId"=%s AND "documentId"!=%s AND "deletedAt" IS NULL',
+                (tenant_id, order_id, doc_id),
             )
             for row in cur.fetchall():
-                other = {
-                    "document_type": row.get("documentType"),
-                    "order_id": row.get("orderId"),
-                    "po_reference": row.get("poReference"),
-                    "structured_json": row.get("structuredJson"),
-                }
-                if link_key(other) != order_key:
-                    continue
+                other_id = row["documentId"]
                 _upsert_doc_link(
                     conn, tenant_id, doc_id, "order_ref",
-                    to_doc_id=row["documentId"], confidence=0.9,
-                    evidence={"order_id": order_id_raw.strip(), "order_key": order_key},
+                    to_doc_id=other_id, confidence=0.9,
+                    evidence={"order_id": order_id},
                 )
                 link_count += 1
 
@@ -247,6 +236,40 @@ def index_document(doc: dict, tenant_id: str) -> dict:
 
 
 # ── query APIs ────────────────────────────────────────────────────────────────
+
+def expand_related_docs_many(doc_ids: list[str], tenant_id: str) -> set[str]:
+    """Batched expand_related_docs: every doc reachable from ANY of doc_ids via
+    a DocLink edge (forward/reverse order_ref, or a shared vendor/customer
+    entity), in a single round trip.
+
+    The per-document version issues 3+ queries per document; resolve_scope_with_c4
+    called it in a loop over the whole document set on every agent tool call,
+    which cost ~0.4 s per document against a remote Postgres (4 s for 10 docs,
+    and growing linearly). Same edges, same result set (as a union).
+    """
+    ids = [str(d) for d in doc_ids if d]
+    if not ids:
+        return set()
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT "toDocId" AS doc FROM "DocLink"'
+            ' WHERE "tenantId"=%(t)s AND "fromDocId" = ANY(%(ids)s) AND "toDocId" IS NOT NULL'
+            "  AND COALESCE(status, 'auto') <> 'rejected'"
+            ' UNION'
+            ' SELECT "fromDocId" AS doc FROM "DocLink"'
+            ' WHERE "tenantId"=%(t)s AND "toDocId" = ANY(%(ids)s)'
+            "  AND COALESCE(status, 'auto') <> 'rejected'"
+            ' UNION'
+            ' SELECT peer."fromDocId" AS doc FROM "DocLink" src'
+            ' JOIN "DocLink" peer ON peer."tenantId" = src."tenantId"'
+            '  AND peer."toEntityRef" = src."toEntityRef"'
+            ' WHERE src."tenantId"=%(t)s AND src."fromDocId" = ANY(%(ids)s)'
+            '  AND src."toEntityRef" IS NOT NULL',
+            {"t": tenant_id, "ids": ids},
+        )
+        return {r["doc"] for r in cur.fetchall() if r.get("doc")}
+
 
 def expand_related_docs(doc_id: str, tenant_id: str) -> list[str]:
     """Return application doc IDs reachable from doc_id via any DocLink edge.

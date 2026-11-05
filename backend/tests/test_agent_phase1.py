@@ -173,7 +173,7 @@ def test_aggregate_financials_no_documents_returns_error(monkeypatch):
 
 def test_search_documents_filters_by_type(monkeypatch):
     df = _sample_df()
-    monkeypatch.setattr("agent.tools.resolve_scope_with_rag", lambda q, company, user: (df, None))
+    monkeypatch.setattr("agent.tools.resolve_scope_with_rag", lambda q, company, user, **kw: (df, None))
     tools, evidence = build_tools(user_id="u1", company_name="AIESEC")
     search = next(t for t in tools if t.name == "search_documents")
 
@@ -185,7 +185,7 @@ def test_search_documents_filters_by_type(monkeypatch):
 
 def test_search_documents_no_match_returns_empty(monkeypatch):
     df = _sample_df()
-    monkeypatch.setattr("agent.tools.resolve_scope_with_rag", lambda q, company, user: (df, None))
+    monkeypatch.setattr("agent.tools.resolve_scope_with_rag", lambda q, company, user, **kw: (df, None))
     tools, _ = build_tools(user_id="u1", company_name="AIESEC")
     search = next(t for t in tools if t.name == "search_documents")
 

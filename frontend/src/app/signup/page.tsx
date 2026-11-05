@@ -15,6 +15,7 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -27,8 +28,14 @@ export default function SignupPage() {
   const handleSignup = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await signupUser({ fullName, companyName, email, password });
+    setError("");
+    setMessage("");
+    const result = await signupUser({ fullName, companyName, email, password });
     setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
     setMessage(t.signupSuccess);
     setTimeout(() => router.push("/login"), 1200);
   };
@@ -141,6 +148,13 @@ export default function SignupPage() {
                   </div>
                 </div>
               ))}
+
+              {error && (
+                <p role="alert" className="rounded-lg px-3 py-2 text-[13px] font-medium text-red-600"
+                   style={{ background: "rgba(220,38,38,0.08)" }}>
+                  {error}
+                </p>
+              )}
 
               {message && (
                 <p className="rounded-lg px-3 py-2 text-[13px] font-medium text-emerald-600"

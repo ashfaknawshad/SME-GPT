@@ -42,6 +42,10 @@ def values_match(a, b, tolerance=0.05):
     return abs(float(a) - float(b)) <= tolerance
 
 
+def _nonzero(value):
+    return None if value is None or value == 0 else value
+
+
 def compute_items_total(items: List[dict]) -> Dict[str, Any]:
     computed_total = 0.0
     valid_line_count = 0
@@ -58,19 +62,21 @@ def compute_items_total(items: List[dict]) -> Dict[str, Any]:
         if not isinstance(item, dict):
             continue
 
-        qty = to_float(item.get("quantity"))
-        unit_price = to_float(item.get("unit_price"))
-        explicit_line_total = to_float(item.get("line_total"))
+        # 0 means "not on the document" here (upstream steps store blanks as
+        # 0), so it must not turn a real line amount into 0 x price = 0.
+        qty = _nonzero(to_float(item.get("quantity")))
+        unit_price = _nonzero(to_float(item.get("unit_price")))
+        explicit_line_total = _nonzero(to_float(item.get("line_total")))
 
         chosen_line_total = None
 
-        # The printed line total is what the document actually charged; qty × unit
-        # price is only a fallback (a misread unit-price column would otherwise
-        # multiply every multi-quantity row a second time).
-        if explicit_line_total:
-            chosen_line_total = explicit_line_total
-        elif qty is not None and unit_price is not None:
+        if qty is not None and unit_price is not None:
             chosen_line_total = qty * unit_price
+        elif explicit_line_total is not None:
+            chosen_line_total = explicit_line_total
+        elif unit_price is not None:
+            # Price with no quantity and no line total: one unit.
+            chosen_line_total = unit_price
 
         if chosen_line_total is not None:
             chosen_line_total = round2(chosen_line_total)
@@ -100,35 +106,46 @@ def validate_arithmetic(fields: dict) -> dict:
     final_total = round2(to_float(fields.get("final_total_amount")))
     payable_amount = round2(to_float(fields.get("payable_amount")))
     cash_return = round2(to_float(fields.get("cash_return")))
+    tax_amount = _nonzero(round2(to_float(fields.get("tax_amount"))))
+
+    # A document total is consistent with its items if it equals the items sum,
+    # or the items sum plus the printed tax (e.g. VAT invoices).
+    expected_totals = [] if computed_items_total is None else [computed_items_total]
+    if computed_items_total is not None and tax_amount is not None:
+        expected_totals.append(round2(computed_items_total + tax_amount))
+
+    def _matches(value):
+        return any(values_match(value, expected) for expected in expected_totals)
 
     checks = {
-        "raw_total_matches_items": values_match(raw_total, computed_items_total),
-        "final_total_matches_items": values_match(final_total, computed_items_total),
-        "payable_matches_items": values_match(payable_amount, computed_items_total),
+        "raw_total_matches_items": _matches(raw_total),
+        "final_total_matches_items": _matches(final_total),
+        "payable_matches_items": _matches(payable_amount),
     }
+
+    # Totals the correction engine filled in FROM the items match them by
+    # construction, so they prove nothing — only compare totals that were
+    # actually read off the document.
+    derived_totals = set(fields.get("derived_totals") or [])
+    compared = [
+        (field, value, checks[check])
+        for field, value, check in (
+            ("raw_total_amount", raw_total, "raw_total_matches_items"),
+            ("final_total_amount", final_total, "final_total_matches_items"),
+            ("payable_amount", payable_amount, "payable_matches_items"),
+        )
+        if value is not None and field not in derived_totals
+    ]
 
     discrepancies = []
     if computed_items_total is not None:
-        if raw_total is not None and not checks["raw_total_matches_items"]:
-            discrepancies.append({
-                "field": "raw_total_amount",
-                "extracted": raw_total,
-                "computed": computed_items_total,
-            })
-
-        if final_total is not None and not checks["final_total_matches_items"]:
-            discrepancies.append({
-                "field": "final_total_amount",
-                "extracted": final_total,
-                "computed": computed_items_total,
-            })
-
-        if payable_amount is not None and not checks["payable_matches_items"]:
-            discrepancies.append({
-                "field": "payable_amount",
-                "extracted": payable_amount,
-                "computed": computed_items_total,
-            })
+        for field, value, matched in compared:
+            if not matched:
+                discrepancies.append({
+                    "field": field,
+                    "extracted": value,
+                    "computed": computed_items_total,
+                })
 
     recommended_raw_total = raw_total
     recommended_final_total = final_total
@@ -136,14 +153,17 @@ def validate_arithmetic(fields: dict) -> dict:
     status = "not_checked"
 
     if computed_items_total is not None:
-        if checks["raw_total_matches_items"] or checks["final_total_matches_items"] or checks["payable_matches_items"]:
+        # No document totals to compare → the totals were derived from the
+        # items and are consistent with them.
+        if not compared or any(matched for _, _, matched in compared):
             status = "matched"
         else:
             status = "mismatch"
 
             if items_result["valid_line_count"] > 0:
-                recommended_final_total = computed_items_total
-                recommended_payable_amount = computed_items_total
+                # Items sum plus any printed tax (expected_totals[-1]).
+                recommended_final_total = expected_totals[-1]
+                recommended_payable_amount = expected_totals[-1]
     else:
         status = "low_confidence"
 

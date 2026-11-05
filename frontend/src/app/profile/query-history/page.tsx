@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import MobileShell from "@/components/layout/MobileShell";
 import BottomNav from "@/components/layout/BottomNav";
-import LanguageSwitcher from "@/components/layout/LanguageSwitcher";
-import ThemeToggle from "@/components/layout/ThemeToggle";
+import TopBar from "@/components/layout/TopBar";
+import PageHeading from "@/components/layout/PageHeading";
 import { getStoredToken } from "@/lib/auth";
 import { AppLanguage, getStoredLanguage, ui } from "@/lib/i18n";
 import { confirmDialog, noticeDialog } from "@/lib/confirm";
@@ -171,18 +171,12 @@ export default function QueryHistoryPage() {
   return (
     <MobileShell>
       <div className="pad-nav" style={{ background: "var(--bg)" }}>
-        <main className="mx-auto w-full max-w-[980px] px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <button
-              onClick={() => router.push("/profile")}
-              className="text-[14px] font-medium text-[var(--brand-mid)]"
-            >
-              ← {t.back}
-            </button>
-
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <LanguageSwitcher />
+        <TopBar title={t.qhTitle} fallbackHref="/settings" />
+        <main className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <PageHeading
+            title={t.qhTitle}
+            subtitle={t.qhSubtitle}
+            actions={
               <button
                 onClick={handleClearAll}
                 disabled={clearing || history.length === 0}
@@ -190,16 +184,8 @@ export default function QueryHistoryPage() {
               >
                 {clearing ? t.clearing : t.clearAll}
               </button>
-            </div>
-          </div>
-
-          <h1 className="text-[24px] font-extrabold text-[var(--text-1)]">
-            {t.qhTitle}
-          </h1>
-
-          <p className="mt-2 text-[14px] text-[var(--text-2)]">
-            {t.qhSubtitle}
-          </p>
+            }
+          />
 
           {loading ? (
             <div
