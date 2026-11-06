@@ -40,6 +40,10 @@ DATASET_COLUMNS = [
     "total_status",
     "payable_amount",
     "cash_return",
+    "tax_amount",
+    "tax_rate",
+    "cash_inflowed",
+    "cash_outflowed",
     "currency",
     "received_status",
     "paid_status",
@@ -325,6 +329,10 @@ def normalize_record(data: dict, user_id: str, force_generate_document_id: bool 
         "total_status": total_status,
         "payable_amount": payable_amount,
         "cash_return": cash_return,
+        "tax_amount": safe_to_float_or_null(data.get("tax_amount", None)),
+        "tax_rate": safe_to_float_or_null(data.get("tax_rate", None)),
+        "cash_inflowed": safe_to_float_or_null(data.get("cash_inflowed", None)),
+        "cash_outflowed": safe_to_float_or_null(data.get("cash_outflowed", None)),
         "currency": nullify_text(data.get("currency", None)),
         "received_status": nullify_text(data.get("received_status", None)),
         "paid_status": nullify_text(data.get("paid_status", None)),
@@ -386,6 +394,18 @@ def parse_record_for_output(record: dict):
         parsed["arithmetic_validation"] = arithmetic if isinstance(arithmetic, dict) else {}
     except Exception:
         parsed["arithmetic_validation"] = {}
+
+    # Discount has no DB column, and documents saved before tax was persisted
+    # have it only in structured_json: surface both from there.
+    try:
+        structured = json.loads(parsed.get("structured_json") or "{}")
+    except Exception:
+        structured = {}
+    if isinstance(structured, dict):
+        for field in ("discount_amount", "tax_amount", "tax_rate"):
+            if str(parsed.get(field) or "").strip().upper() in ("", "NULL", "NONE", "0", "0.0"):
+                if structured.get(field) not in (None, "", "NULL"):
+                    parsed[field] = structured[field]
 
     # Always compute category live — DB may be NULL for older records
     if not parsed.get("category") or parsed["category"] in ("NULL", "Unknown"):

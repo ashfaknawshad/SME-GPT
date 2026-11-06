@@ -23,8 +23,9 @@ from langchain_core.tools import tool
 
 import data_tools as dt
 from pal_executor import execute_plan
-from pal_scope import build_row_records, resolve_scope_with_c4, resolve_scope_with_rag, retrieve_rag_chunks
+from pal_scope import resolve_scope_with_c4, resolve_scope_with_rag, retrieve_rag_chunks, rows_for_plan
 from pal_validator import validate_plan
+from profit_summary import compute_profit_summary
 
 _AGG_TO_TASK = {"sum": "aggregate_sum", "avg": "aggregate_avg", "count": "aggregate_count"}
 
@@ -62,19 +63,28 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         delivery notes) for the current company. This tool NEVER hallucinates a
         number -- it runs real pandas arithmetic. Use it for any "how much" /
         "how many" / "total" / "average" question; never answer those from memory.
+        For profit or loss use get_profit_summary instead.
+
+        Each document counts once at its final total (after discounts, including
+        VAT), unless the question is about items (item, description, qty,
+        unit_price), which works line by line, before VAT and discounts.
 
         Args:
           measure_field: canonical field to aggregate. Use "total" for money
-            amounts (almost always what "how much" questions want). Other
-            options: qty, unit_price, tax, discount.
+            amounts (almost always what "how much" questions want). Use "tax"
+            for VAT and "discount" for discounts. Other options: qty, unit_price.
           agg: "sum" (total money), "avg" (average), "count" (how many),
             "max", "min".
           filters: list of {"field": ..., "op": ..., "value": ...} objects to
             narrow the rows. Canonical fields: item, description, qty,
             unit_price, total, tax, discount, currency, doc_date, vendor,
-            flow_type, paid_status, received_status. Ops: eq, in, contains,
-            gte, lte, between (there is no "not equal" -- express exclusion
-            with "in" over the values you DO want).
+            flow_type, paid_status, received_status, document_type. Ops: eq, in,
+            contains, gte, lte, between (there is no "not equal" -- express
+            exclusion with "in" over the values you DO want).
+
+            document_type values: invoice, receipt, po, dn. Purchase orders are
+            commitments, not spending: for spending history add document_type
+            in ["invoice", "receipt"].
 
             flow_type values: payable (we owe), receivable (owed to us),
             cash_inflow (money already received), cash_outflow (money already
@@ -115,7 +125,6 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         if err or df.empty:
             return {"error": err or "No documents found for this company."}
 
-        rows = build_row_records(df)
         group_by = group_by or []
         task = "group_by_sum" if group_by else _AGG_TO_TASK.get(agg, "aggregate_sum")
 
@@ -129,6 +138,7 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
         if not is_valid:
             return {"error": f"Invalid arguments: {reason}. Use only canonical fields/ops."}
 
+        rows = rows_for_plan(plan, df)
         computed = execute_plan(plan, rows)
 
         # Optional deterministic scalar factor (e.g. ×1.15 for "add 15% markup").
@@ -181,6 +191,42 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
             result["base_value"] = base_value
             result["base_per_currency"] = base_per_currency
         return result
+
+    @tool
+    def get_profit_summary(date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict:
+        """Compute profit or loss: revenue minus expenses, using each document's
+        final total after discounts and including VAT, with VAT and discounts
+        also reported separately. ALWAYS use this for "what's my profit",
+        "did I make a loss", "net income", "margin" -- never work profit out
+        yourself from other totals.
+
+        Args:
+          date_from: optional start of the period, YYYY-MM-DD.
+          date_to: optional end of the period, YYYY-MM-DD.
+
+        Returns `profit`, `revenue`, `expenses`, `profit_excluding_tax`,
+        `margin_pct` and `currency` when one currency is involved, always a
+        `per_currency` list with the tax and discount figures, plus `basis` and
+        `caveats`. Mention any caveats in your answer: when only expenses are
+        recorded so far, say so rather than simply reporting a loss.
+        """
+        df, err = scope_c4()
+        if err or df.empty:
+            return {"error": err or "No documents found for this company."}
+
+        # A receipt on a linked order settles an invoice that's already counted.
+        settling_receipts: set[str] = set()
+        for view in _order_views():
+            if view["counts"]["invoice"]:
+                settling_receipts |= {str(d["document_id"]) for d in view["documents"] if d["document_type"] == "receipt"}
+
+        summary = compute_profit_summary(df, date_from, date_to, exclude_ids=settling_receipts)
+        used = set(summary["documents_used"])
+        if used:
+            evidence.extend(dt.build_evidence(
+                df[df["document_id"].astype(str).isin(used)], "Included by get_profit_summary."
+            ))
+        return summary
 
     @tool
     def search_documents(
@@ -463,5 +509,5 @@ def build_tools(user_id: str, company_name: str) -> tuple[list, list[dict]]:
 
         return {"discrepancies": all_found, "orders_checked": orders_checked}
 
-    return [aggregate_financials, search_documents, get_document_status, get_order_chain,
-            list_order_issues, find_discrepancies], evidence
+    return [aggregate_financials, get_profit_summary, search_documents, get_document_status,
+            get_order_chain, list_order_issues, find_discrepancies], evidence

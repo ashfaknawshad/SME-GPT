@@ -124,6 +124,11 @@ GUARD_FALLBACK = {
         "“How I worked this out” eke balanna — nathnam aye try karanna kiyanna."
     ),
 }
+REQUEST_REFUSED = {
+    "en": "I can't help with that. I can only work with your own company's financial documents — ask me about your invoices, receipts, orders or totals.",
+    "si": "මට ඒ සඳහා උදව් කළ නොහැක. මට වැඩ කළ හැක්කේ ඔබේම සමාගමේ මූල්‍ය ලේඛන සමඟ පමණි — ඔබේ ඉන්වොයිස්, රිසිට්, ඇණවුම් හෝ එකතු ගැන අසන්න.",
+    "singlish": "Mata eka karanna bari. Mata puluwan oyage company eke financial documents ekka witharai — invoices, receipts, orders nathnam totals gena ahanna.",
+}
 GUARD_FALLBACK_NO_DATA = {
     "en": "I couldn't ground that answer in verified data — could you rephrase your question?",
     "si": "එම පිළිතුර තහවුරු කළ දත්ත මත පදනම් කළ නොහැකි විය — කරුණාකර ඔබේ ප්‍රශ්නය වෙනත් ආකාරයකින් අසන්න.",

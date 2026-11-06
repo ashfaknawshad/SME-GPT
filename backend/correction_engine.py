@@ -120,16 +120,119 @@ def recalculate_totals(items):
     return round(total, 2)
 
 
+_PERCENT_SUFFIX = r"\s*(?:\(?\s*\d+(?:\.\d+)?\s*%?\s*\)?)?\s*:?\s*$"
+_TAX_ROW_RE = re.compile(r"^\s*(?:vat|nbt|sscl|gst|tax|බදු|වැට්)" + _PERCENT_SUFFIX, re.IGNORECASE)
+_DISCOUNT_ROW_RE = re.compile(
+    r"^\s*(?:less\s*:?\s*)?(?:trade\s+|cash\s+)?(?:discount|disc\.?|වට්ටම්)" + _PERCENT_SUFFIX, re.IGNORECASE
+)
+_TAX_LABEL_RE = re.compile(r"\b(?:vat|nbt|sscl|gst|tax)\b|බදු|වැට්", re.IGNORECASE)
+_DISCOUNT_LABEL_RE = re.compile(r"\b(?:discount|disc\.?)(?!\w)|වට්ටම්", re.IGNORECASE)
+_AMOUNT_RE = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+_TOTALS_TOLERANCE = 0.05
+
+
+def _split_adjustment_rows(items, data: dict):
+    """Rows that are really the document's VAT or discount ("VAT 18% ... 1,062")
+    aren't items: move them to their own fields so they don't inflate the subtotal."""
+    if not isinstance(items, list):
+        return items
+    kept = []
+    for item in items:
+        description = str(item.get("description", "")) if isinstance(item, dict) else ""
+        field = "tax_amount" if _TAX_ROW_RE.match(description) else (
+            "discount_amount" if _DISCOUNT_ROW_RE.match(description) else None
+        )
+        amount = None
+        if field:
+            amount = _amount_or_none(item.get("line_total")) or _amount_or_none(item.get("unit_price"))
+        if amount is None:
+            kept.append(item)
+        elif _amount_or_none(data.get(field)) is None:
+            data[field] = abs(amount)
+    return kept
+
+
+def _labelled_amounts(text: str, label_re) -> set[float]:
+    """Amounts on, or on the line after, a line carrying the label. OCR often
+    puts a right-aligned amount on the line below its label."""
+    lines = str(text or "").splitlines()
+    found: set[float] = set()
+    for i, line in enumerate(lines):
+        if label_re.search(line):
+            for candidate in [line] + lines[i + 1:i + 2]:
+                for token in _AMOUNT_RE.findall(candidate):
+                    found.add(float(token.replace(",", "")))
+    return found
+
+
+def _resolve_tax_and_discount(data: dict, items_total: float) -> tuple[float, float]:
+    """The document's tax and discount, recovering what extraction missed. A
+    figure read back from the OCR text or a printed rate is only accepted when it
+    makes the items reconcile with the printed total, so a stray number can't
+    change a document's amounts."""
+    tax = abs(safe_float(data.get("tax_amount")))
+    discount = abs(safe_float(data.get("discount_amount")))
+    if items_total <= 0:
+        return tax, discount
+
+    tax_rate = safe_float(data.get("tax_rate"))
+    discount_rate = safe_float(data.get("discount_rate"))
+    rate_discount = round(items_total * discount_rate / 100, 2) if discount_rate > 0 else 0.0
+
+    def rate_tax(applied_discount: float) -> float:
+        return round((items_total - applied_discount) * tax_rate / 100, 2) if tax_rate > 0 else 0.0
+
+    final_total = safe_float(data.get("final_total_amount"))
+    if final_total <= 0:
+        # Nothing printed to reconcile against: apply the printed rates.
+        discount = discount or rate_discount
+        return tax or rate_tax(discount), discount
+
+    def reconciles(candidate_tax: float, candidate_discount: float) -> bool:
+        return abs(items_total - candidate_discount + candidate_tax - final_total) <= _TOTALS_TOLERANCE
+
+    if reconciles(tax, discount) or abs(items_total - final_total) <= _TOTALS_TOLERANCE:
+        return tax, discount
+
+    text = "\n".join(str(data.get(k) or "") for k in ("corrected_text", "raw_text"))
+    discounts = {discount} if discount else {0.0, rate_discount} | _labelled_amounts(text, _DISCOUNT_LABEL_RE)
+    for candidate_discount in sorted(discounts):
+        taxes = {tax} if tax else {0.0, rate_tax(candidate_discount)} | _labelled_amounts(text, _TAX_LABEL_RE)
+        for candidate_tax in sorted(taxes):
+            if reconciles(candidate_tax, candidate_discount):
+                return candidate_tax, candidate_discount
+
+    # A printed subtotal equal to the items, above the final total: the
+    # difference is a discount the OCR text didn't label clearly.
+    raw_total = safe_float(data.get("raw_total_amount"))
+    if not discount and abs(raw_total - items_total) <= _TOTALS_TOLERANCE and final_total < raw_total + tax:
+        discount = round(raw_total + tax - final_total, 2)
+    return tax, discount
+
+
 def correct_extracted_fields(extracted_json: dict):
     data = deepcopy(extracted_json)
 
-    items = data.get("items", [])
+    items = _split_adjustment_rows(data.get("items", []), data)
     normalized_items = normalize_items(items)
 
     data["items"] = normalized_items
     recalculated_total = recalculate_totals(normalized_items)
 
+    tax_amount, discount_amount = _resolve_tax_and_discount(data, recalculated_total)
+    if tax_amount:
+        data["tax_amount"] = tax_amount
+    if discount_amount:
+        data["discount_amount"] = discount_amount
+    net_total = round(recalculated_total - discount_amount + tax_amount, 2)
+
     existing_final_total = safe_float(data.get("final_total_amount", 0))
+    # Items already include the VAT (a printed total equal to the items net of
+    # discount): the UI must not add it a second time.
+    data["tax_inclusive"] = bool(
+        tax_amount and existing_final_total
+        and abs(recalculated_total - discount_amount - existing_final_total) <= _TOTALS_TOLERANCE
+    )
     existing_payable_amount = safe_float(data.get("payable_amount", 0))
 
     # Record which totals were filled in here rather than read off the
@@ -139,12 +242,12 @@ def correct_extracted_fields(extracted_json: dict):
     derived_totals = []
     if recalculated_total > 0:
         if existing_final_total == 0:
-            data["final_total_amount"] = recalculated_total
+            data["final_total_amount"] = net_total
             derived_totals.append("final_total_amount")
         if existing_payable_amount == 0:
             # Payable is the document total (same rule dataset_manager applies
-            # on save), falling back to the items sum when no total is printed.
-            data["payable_amount"] = existing_final_total or recalculated_total
+            # on save), falling back to the items' net total when none is printed.
+            data["payable_amount"] = existing_final_total or net_total
             derived_totals.append("payable_amount")
 
         data["recommended_total_from_items"] = recalculated_total

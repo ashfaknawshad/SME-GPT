@@ -1,15 +1,14 @@
 """
-Central LLM client — routes inference to Gemini (preferred) or DeepSeek.
+Central LLM client — routes inference to DeepSeek (or Gemini without a DeepSeek key).
 
 Priority:
   Pipeline tasks (OCR correction + extraction):
     PIPELINE_LLM_PROVIDER env var, defaulting to:
-      gemini   if GEMINI_API_KEY is set
-      deepseek otherwise
+      deepseek if DEEPSEEK_API_KEY is set
+      gemini   otherwise
   Query tasks (PAL planner + answer, Q&A):
-    QUERY_LLM_PROVIDER env var, defaulting to:
-      gemini   if GEMINI_API_KEY is set
-      deepseek otherwise
+    deepseek if DEEPSEEK_API_KEY is set
+    gemini   otherwise
 
 Fine-tuned model endpoints (set after Vertex AI fine-tuning completes):
   GEMINI_TUNED_EXTRACTION_MODEL — e.g. "tunedModels/sme-gpt-extraction-v1"
@@ -95,17 +94,31 @@ _GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT_SECS", "60"))
 # ── DeepSeek (cloud, OpenAI-compatible) ───────────────────────────────────────
 DEEPSEEK_API_KEY  = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
-DEEPSEEK_MODEL    = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")  # deepseek-chat was retired 2026-07-24
+# Retired names still found in older .env files map to the current model, so a
+# stale setting can't take the assistant down when DeepSeek stops redirecting them.
+_RETIRED_DEEPSEEK_MODELS = {"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash"}
+_DEEPSEEK_MODEL_DEFAULT = "deepseek-flash"
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", _DEEPSEEK_MODEL_DEFAULT).strip() or _DEEPSEEK_MODEL_DEFAULT
+if DEEPSEEK_MODEL in _RETIRED_DEEPSEEK_MODELS:
+    DEEPSEEK_MODEL = _DEEPSEEK_MODEL_DEFAULT
 _DEEPSEEK_TIMEOUT = int(os.getenv("DEEPSEEK_TIMEOUT_SECS", "120"))
 
 # ── Provider selection ─────────────────────────────────────────────────────────
-# No local fallback: both tiers resolve to a cloud provider. Gemini is preferred
-# when a key is present; DeepSeek is the default everywhere else.
-_default_pipeline = "gemini" if GEMINI_API_KEY else "deepseek"
+# No local fallback: both tiers resolve to a cloud provider. DeepSeek is the
+# default; Gemini is only used when it's the sole key configured (or, for the
+# pipeline, when PIPELINE_LLM_PROVIDER asks for it). Questions ignore any
+# provider override, so an old setting can't move them off DeepSeek.
+_default_pipeline = "deepseek" if DEEPSEEK_API_KEY or not GEMINI_API_KEY else "gemini"
 PIPELINE_PROVIDER = os.getenv("PIPELINE_LLM_PROVIDER", _default_pipeline).strip().lower()
 
-_default_query = "gemini" if GEMINI_API_KEY else "deepseek"
-QUERY_PROVIDER = os.getenv("QUERY_LLM_PROVIDER", _default_query).strip().lower()
+QUERY_PROVIDER = "deepseek" if DEEPSEEK_API_KEY or not GEMINI_API_KEY else "gemini"
+
+
+def query_provider_order() -> list[str]:
+    """The provider that answers questions: DeepSeek whenever it's configured."""
+    if DEEPSEEK_API_KEY:
+        return ["deepseek"]
+    return ["gemini"] if GEMINI_API_KEY else []
 
 
 # ── Gemini caller ──────────────────────────────────────────────────────────────
@@ -186,36 +199,28 @@ def _call_deepseek(prompt: str, system: str = "", format: str | None = None) -> 
 def call_llm(prompt: str, system: str = "", format: str | None = None) -> str:
     """Q&A / PAL planning / answer generation.
 
-    Routes to Gemini (with tuned query model if set) when configured, otherwise
-    DeepSeek. There is no local fallback: if every configured provider fails,
-    LLMUnavailableError is raised. Responses are NOT cached here — the caller
-    should cache if needed.
+    Uses the provider from query_provider_order(). There is no local fallback:
+    if it fails, LLMUnavailableError is raised. Responses are NOT cached here —
+    the caller should cache if needed.
     """
-    if QUERY_PROVIDER == "gemini" and GEMINI_API_KEY:
+    for provider in query_provider_order():
         try:
             t0 = time.time()
-            result = _call_gemini(
-                prompt, system=system, format=format,
-                model_override=GEMINI_TUNED_QUERY_MODEL,
-            )
-            print(f"[LLM] Gemini query call in {time.time()-t0:.1f}s "
-                  f"(model: {GEMINI_TUNED_QUERY_MODEL or GEMINI_MODEL})", flush=True)
+            if provider == "gemini":
+                result = _call_gemini(
+                    prompt, system=system, format=format,
+                    model_override=GEMINI_TUNED_QUERY_MODEL,
+                )
+            else:
+                result = _call_deepseek(prompt, system=system, format=format)
+            print(f"[LLM] {provider} query call in {time.time()-t0:.1f}s", flush=True)
             return result
         except Exception as exc:
-            print(f"[LLM] Gemini query failed ({exc}); trying DeepSeek.", flush=True)
-
-    if DEEPSEEK_API_KEY:
-        try:
-            t0 = time.time()
-            result = _call_deepseek(prompt, system=system, format=format)
-            print(f"[LLM] DeepSeek query call in {time.time()-t0:.1f}s", flush=True)
-            return result
-        except Exception as exc:
-            print(f"[LLM] DeepSeek query failed ({exc}).", flush=True)
+            print(f"[LLM] {provider} query failed ({exc}).", flush=True)
 
     raise LLMUnavailableError(
-        "No LLM provider is available for query tasks. Set GEMINI_API_KEY or "
-        "DEEPSEEK_API_KEY (local Ollama inference has been removed)."
+        "No LLM provider is available for query tasks. Set DEEPSEEK_API_KEY "
+        "(local Ollama inference has been removed)."
     )
 
 

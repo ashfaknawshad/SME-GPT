@@ -23,15 +23,14 @@ def test_call_llm_uses_deepseek_when_no_gemini(monkeypatch):
     assert llm_client.call_llm("hi") == "DS_ANSWER"
 
 
-def test_call_llm_prefers_gemini_when_configured(monkeypatch):
+def test_call_llm_prefers_deepseek_when_both_are_configured(monkeypatch):
     monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "gm-key")
     monkeypatch.setattr(llm_client, "DEEPSEEK_API_KEY", "ds-key")
-    monkeypatch.setattr(llm_client, "QUERY_PROVIDER", "gemini")
-    monkeypatch.setattr(llm_client, "_call_gemini", lambda *a, **k: "GEMINI_ANSWER")
-    monkeypatch.setattr(llm_client, "_call_deepseek",
-                        lambda *a, **k: pytest.fail("DeepSeek should not be called"))
+    monkeypatch.setattr(llm_client, "_call_deepseek", lambda *a, **k: "DEEPSEEK_ANSWER")
+    monkeypatch.setattr(llm_client, "_call_gemini",
+                        lambda *a, **k: pytest.fail("Gemini should not be called"))
 
-    assert llm_client.call_llm("hi") == "GEMINI_ANSWER"
+    assert llm_client.call_llm("hi") == "DEEPSEEK_ANSWER"
 
 
 def test_call_llm_falls_back_to_deepseek_when_gemini_fails(monkeypatch):
