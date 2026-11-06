@@ -122,19 +122,33 @@ class ColabEmbeddingService(EmbeddingService):
         self.query_timeout = float(os.getenv("EMBEDDING_QUERY_TIMEOUT_SECS", "8"))
         self.passage_timeout = float(os.getenv("EMBEDDING_PASSAGE_TIMEOUT_SECS", "120"))
 
-    def _url(self) -> str:
-        # Read per call: COLAB_OCR_URL changes on every Colab restart.
-        base = (self._base_url or os.getenv("COLAB_OCR_URL", "")).strip()
-        if not base:
+    def _urls(self) -> list[str]:
+        # Read per call: COLAB_OCR_URL changes on every Colab restart. It may
+        # list several workers (comma-separated), tried in order.
+        from colab_ocr_client import colab_base_urls
+
+        bases = colab_base_urls(self._base_url)
+        if not bases:
             raise RuntimeError("COLAB_OCR_URL is empty; Colab embedding engine unavailable.")
-        return base.rstrip("/") + "/embed"
+        return [b + "/embed" for b in bases]
 
     def embed(self, texts: list[str], mode: str = "passage") -> list[list[float]]:
         import requests
 
         if not texts:
             return []
-        url = self._url()
+        urls = self._urls()
+        last_error: Exception | None = None
+        for url in urls:
+            try:
+                return self._embed_via(url, texts, mode)
+            except requests.exceptions.RequestException as exc:
+                last_error = exc
+        raise last_error
+
+    def _embed_via(self, url: str, texts: list[str], mode: str) -> list[list[float]]:
+        import requests
+
         timeout = self.query_timeout if mode == "query" else self.passage_timeout
         out: list[list[float]] = []
         for start in range(0, len(texts), self.BATCH_SIZE):
