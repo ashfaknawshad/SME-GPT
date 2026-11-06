@@ -44,6 +44,14 @@ _MAX_ARITHMETIC_BASE = 40
 
 _ROUNDING_TOLERANCE = 0.5
 
+# "roughly LKR 384,000" for 384,407.08 restates a real figure. A round number is
+# accepted only if it's that figure correctly rounded and within this share of it.
+_MAX_ROUNDING_SHARE = 0.01
+
+# A tool's headline results. Their sums and differences (a net position from two
+# totals) stay allowed however many other figures the conversation holds.
+_HEADLINE_KEYS = {"value", "base_value", "difference", "profit", "profit_excluding_tax", "revenue", "expenses"}
+
 _BLOCKED_REQUEST_RES = [re.compile(p, re.IGNORECASE) for p in (
     r"\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(instruction|prompt|rule|guardrail|guard|polic)",
     r"\b(show|reveal|print|repeat|tell me|what (is|are)|give me)\b.{0,30}\b(system prompt|your (prompt|instructions|rules))\b",
@@ -102,6 +110,28 @@ def _collect_numbers(value, out: set[float]) -> None:
             _collect_numbers(v, out)
 
 
+def _collect_headlines(value, out: set[float]) -> None:
+    if isinstance(value, dict):
+        for key, v in value.items():
+            if key in _HEADLINE_KEYS and _is_number(v) and v == v:
+                out.add(round(abs(float(v)), 2))
+            else:
+                _collect_headlines(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            _collect_headlines(v, out)
+
+
+def _pairwise(values: set[float]) -> set[float]:
+    combined = set()
+    ordered = list(values)
+    for i, a in enumerate(ordered):
+        for b in ordered[i + 1:]:
+            combined.add(round(a + b, 2))
+            combined.add(round(abs(a - b), 2))
+    return combined
+
+
 def _expand_with_arithmetic(base: set[float]) -> set[float]:
     """Add simple pairwise sums/differences of allowed numbers, so a legitimate
     derived total (e.g. "surplus = income - expenses", both real/user-given
@@ -111,13 +141,7 @@ def _expand_with_arithmetic(base: set[float]) -> set[float]:
     numbers are allowed, it doesn't invent new base numbers."""
     if len(base) > _MAX_ARITHMETIC_BASE:
         return set(base)
-    expanded = set(base)
-    values = list(base)
-    for i, a in enumerate(values):
-        for b in values[i + 1:]:
-            expanded.add(round(a + b, 2))
-            expanded.add(round(abs(a - b), 2))
-    return expanded
+    return set(base) | _pairwise(base)
 
 
 def collect_allowed_numbers(tool_outputs: list, human_texts: list | None = None) -> set[float]:
@@ -129,6 +153,7 @@ def collect_allowed_numbers(tool_outputs: list, human_texts: list | None = None)
     dicts, sometimes JSON strings. Expanded with simple sums/differences so
     basic arithmetic on these numbers (a total, a surplus) isn't blocked."""
     allowed: set[float] = set()
+    headlines: set[float] = set()
     for content in tool_outputs:
         if isinstance(content, str):
             try:
@@ -136,9 +161,10 @@ def collect_allowed_numbers(tool_outputs: list, human_texts: list | None = None)
             except (ValueError, TypeError):
                 pass  # not JSON — scan the raw text for numbers (handled below)
         _collect_numbers(content, allowed)
+        _collect_headlines(content, headlines)
     for text in human_texts or []:
         _collect_numbers(content_text(text), allowed)
-    return _expand_with_arithmetic(allowed)
+    return _expand_with_arithmetic(allowed) | headlines | _pairwise(headlines)
 
 
 def _blank_exempt_spans(text: str) -> str:
@@ -160,9 +186,25 @@ def _must_be_grounded(token: str, before: str, after: str) -> bool:
     return True
 
 
-def answer_is_grounded(text: str, allowed: set[float]) -> bool:
-    """False if `text` states a number no tool call produced."""
+def _is_rounding_of_allowed(token: str, num: float, allowed: set[float]) -> bool:
+    """True if a round whole number ("384,000") is a real figure correctly rounded."""
+    digits = token.replace(",", "")
+    if "." in digits or num == 0:
+        return False
+    trailing_zeros = len(digits) - len(digits.rstrip("0"))
+    if not trailing_zeros:
+        return False
+    precision = 10 ** trailing_zeros
+    return any(
+        a and round(a / precision) * precision == num and abs(num - a) <= abs(a) * _MAX_ROUNDING_SHARE
+        for a in allowed
+    )
+
+
+def ungrounded_figures(text: str, allowed: set[float]) -> list[str]:
+    """The figures in `text` that no tool call produced."""
     scrubbed = _blank_exempt_spans(content_text(text))
+    rejected = []
     for match in _ANY_NUMBER_RE.finditer(scrubbed):
         token = match.group(0)
         before = scrubbed[max(0, match.start() - 12):match.start()]
@@ -170,6 +212,13 @@ def answer_is_grounded(text: str, allowed: set[float]) -> bool:
         if not _must_be_grounded(token, before, after):
             continue
         num = float(token.replace(",", ""))
-        if not any(abs(num - a) <= _ROUNDING_TOLERANCE for a in allowed):
-            return False
-    return True
+        if any(abs(num - a) <= _ROUNDING_TOLERANCE for a in allowed):
+            continue
+        if not _is_rounding_of_allowed(token, num, allowed):
+            rejected.append(token)
+    return rejected
+
+
+def answer_is_grounded(text: str, allowed: set[float]) -> bool:
+    """False if `text` states a number no tool call produced."""
+    return not ungrounded_figures(text, allowed)

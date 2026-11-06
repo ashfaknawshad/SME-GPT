@@ -18,6 +18,7 @@ import data_tools as dt
 import dataset_manager
 import llm_client
 from agent.guard import answer_is_grounded, collect_allowed_numbers, content_text, is_blocked_request
+from agent.language import GUARD_FALLBACK
 from agent.tools import build_tools
 from arithmetic_validator import validate_arithmetic
 from pal_executor import execute_plan
@@ -269,6 +270,47 @@ def test_guard_accepts_a_negative_tool_figure_written_as_a_loss():
 def test_guard_allows_rounding_to_the_rupee_only():
     assert answer_is_grounded("LKR 1,062", {1062.4}) is True
     assert answer_is_grounded("LKR 1,070", {1062.4}) is False
+
+
+def test_guard_accepts_a_correctly_rounded_real_figure():
+    # "roughly LKR 384,000" for a net of 384,407.08 blanked a correct answer.
+    allowed = collect_allowed_numbers([{"value": 717576.91}, {"value": 333169.83}])
+    assert answer_is_grounded("You're paying out roughly LKR 384,000 more.", allowed) is True
+
+
+@pytest.mark.parametrize("answer", [
+    "roughly LKR 390,000",  # not how the real figure rounds
+    "roughly LKR 400,000",  # how it rounds, but too far from the real figure
+    "LKR 384,000.00",  # states an exact amount
+])
+def test_guard_rejects_figures_that_only_look_rounded(answer):
+    assert answer_is_grounded(answer, {384407.08}) is False
+
+
+def test_net_of_two_totals_is_allowed_even_in_a_large_result():
+    noise = {"rows": [float(1000 + i * 37) for i in range(60)]}
+    allowed = collect_allowed_numbers([noise, {"value": 717576.91}, {"value": 333169.83}])
+    assert answer_is_grounded("Net: LKR 384,407.08", allowed) is True
+
+
+def test_stray_figure_gets_one_rewrite_instead_of_a_blanked_answer(monkeypatch):
+    messages, _ = _run_agent(monkeypatch, pd.DataFrame([_vat_discount_invoice()]), [
+        AIMessage(content="", tool_calls=[{"name": "get_profit_summary", "args": {}, "id": "c1"}]),
+        AIMessage(content="Your profit is LKR 777."),
+        AIMessage(content="Your profit is LKR 1,062.00."),
+    ], "what's my profit")
+    assert messages[-1].content == "Your profit is LKR 1,062.00."
+    assert not any("no tool returned" in content_text(m.content) for m in messages)
+
+
+def test_rewrite_with_another_invented_figure_still_falls_back(monkeypatch):
+    messages, _ = _run_agent(monkeypatch, pd.DataFrame([_vat_discount_invoice()]), [
+        AIMessage(content="", tool_calls=[{"name": "get_profit_summary", "args": {}, "id": "c1"}]),
+        AIMessage(content="Your profit is LKR 777."),
+        AIMessage(content="Your profit is LKR 888."),
+    ], "what's my profit")
+    assert "777" not in messages[-1].content and "888" not in messages[-1].content
+    assert messages[-1].content == GUARD_FALLBACK["en"]
 
 
 def test_arithmetic_expansion_is_capped_for_large_results():

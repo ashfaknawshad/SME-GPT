@@ -21,7 +21,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from agent.guard import answer_is_grounded, collect_allowed_numbers, content_text
+from agent.guard import answer_is_grounded, collect_allowed_numbers, content_text, ungrounded_figures
 from agent.language import (
     GUARD_FALLBACK,
     GUARD_FALLBACK_NO_DATA,
@@ -114,6 +114,14 @@ _PROFIT_QUESTION_RE = re.compile(
 )
 _PROFIT_TOOL = "get_profit_summary"
 
+# Sent once when a draft states figures no tool returned, so one stray number
+# costs a rewrite rather than the whole answer. Never saved to the conversation.
+_REWRITE_INSTRUCTION = (
+    "Your draft answer stated these figures, which no tool returned: {figures}. Rewrite the "
+    "answer using only the exact figures from the tool results. Remove anything you can't "
+    "state exactly. Don't call any tools, and don't mention this correction."
+)
+
 
 def _repair_dangling_tool_calls(messages: list) -> list:
     """Providers reject a history where an assistant tool call has no result.
@@ -157,7 +165,27 @@ def _latest_human_text(messages: list) -> str:
     return ""
 
 
-def _guard_node(state: MessagesState) -> dict:
+def _rewrite_with_exact_figures(rewrite, messages: list, rejected: list[str], allowed: set[float]) -> str | None:
+    """One attempt to fix a draft with ungrounded figures. The rewrite is checked
+    just as strictly; None when it fails, so the caller falls back."""
+    print(f"[GUARD] rejected figures {rejected}; asking for one rewrite.", flush=True)
+    correction = HumanMessage(content=_REWRITE_INSTRUCTION.format(figures=", ".join(rejected)))
+    try:
+        response = rewrite(_repair_dangling_tool_calls(list(messages)) + [correction])
+    except Exception as exc:
+        print(f"[GUARD] rewrite failed: {type(exc).__name__}: {exc}", flush=True)
+        return None
+    text = content_text(response.content)
+    if getattr(response, "tool_calls", None) or not text.strip():
+        return None
+    still_rejected = ungrounded_figures(text, allowed)
+    if still_rejected:
+        print(f"[GUARD] rewrite still has ungrounded figures {still_rejected}.", flush=True)
+        return None
+    return text
+
+
+def _guard_node(state: MessagesState, rewrite=None) -> dict:
     turn = _current_turn(state["messages"])
     final = turn[-1]
     lang = detect_reply_language(_latest_human_text(state["messages"]))
@@ -186,6 +214,11 @@ def _guard_node(state: MessagesState) -> dict:
     if answer_is_grounded(text, allowed):
         return {}
 
+    if rewrite is not None:
+        rewritten = _rewrite_with_exact_figures(rewrite, all_msgs, ungrounded_figures(text, allowed), allowed)
+        if rewritten:
+            return {"messages": [AIMessage(content=rewritten, id=final.id)]}
+
     # Never dump raw tool JSON into the chat bubble — the exact figures the tools
     # returned are already surfaced in the "How I worked this out" trace and the
     # Sources panel. The bubble stays a clean, honest sentence pointing there.
@@ -206,13 +239,20 @@ def build_agent_graph(tools: list, checkpointer, company_name: str, document_id:
     if document_id:
         prompt += _DOC_CONTEXT.format(document_id=document_id)
 
-    def agent_node(state: MessagesState) -> dict:
+    def system_message(messages: list) -> SystemMessage:
         # Decide the reply language from the latest question on every model
         # call (not once per thread), so a conversation can switch freely
         # between English, Sinhala and Singlish. Appended to the single system
         # message -- some providers reject a system message mid-conversation.
-        lang = detect_reply_language(_latest_human_text(state["messages"]))
-        system = SystemMessage(content=f"{prompt}\n\n{reply_language_instruction(lang)}")
+        lang = detect_reply_language(_latest_human_text(messages))
+        return SystemMessage(content=f"{prompt}\n\n{reply_language_instruction(lang)}")
+
+    def guard_node(state: MessagesState) -> dict:
+        system = system_message(state["messages"])
+        return _guard_node(state, rewrite=lambda messages: base_model.invoke([system] + messages))
+
+    def agent_node(state: MessagesState) -> dict:
+        system = system_message(state["messages"])
         history = _repair_dangling_tool_calls(list(state["messages"]))
         turn = _current_turn(history)
         needs_profit_tool = (
@@ -226,7 +266,7 @@ def build_agent_graph(tools: list, checkpointer, company_name: str, document_id:
     graph = StateGraph(MessagesState)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", ToolNode(tools, handle_tool_errors=_TOOL_ERROR_MESSAGE))
-    graph.add_node("guard", _guard_node)
+    graph.add_node("guard", guard_node)
 
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", _should_continue, {"tools": "tools", "guard": "guard"})
