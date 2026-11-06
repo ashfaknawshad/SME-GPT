@@ -151,6 +151,10 @@ def execute_plan(plan: dict, rows: list[dict]) -> dict:
         if field not in filtered.columns:
             return {"value": None, "currency": currency, "operation": f"group_by_sum({field})",
                     "rows_used": [], "row_count": 0, "groups": []}
+        if filtered.empty:
+            # Nothing matched: groupby().apply() on no rows can't build the result frame.
+            return {"value": 0.0, "currency": currency, "operation": f"group_by_sum({field})",
+                    "rows_used": [], "row_count": 0, "groups": []}
         grouped = filtered.groupby(group_fields, dropna=False).apply(
             lambda g: _AGGS["sum"](_numeric_series(g, field)), include_groups=False
         ).reset_index(name=field)

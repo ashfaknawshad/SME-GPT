@@ -57,6 +57,7 @@ type DocumentDetail = {
   // Tax fields
   tax_amount?: string | number | null;
   tax_rate?: string | number | null;
+  discount_amount?: string | number | null;
   // Cash flow tracking
   cash_inflowed?: string | number | null;
   cash_outflowed?: string | number | null;
@@ -294,6 +295,7 @@ export default function AnalysisDetailPage() {
           items: editedDocument.items,
           tax_amount: editedDocument.tax_amount,
           tax_rate: editedDocument.tax_rate,
+          discount_amount: editedDocument.discount_amount,
         }),
       });
 
@@ -1017,8 +1019,12 @@ export default function AnalysisDetailPage() {
                       const taxAmt  = rawTax  != null && rawTax  !== "NULL" && rawTax  !== "" ? parseFloat(String(rawTax))  : 0;
                       const taxRate = rawRate != null && rawRate !== "NULL" && rawRate !== "" ? parseFloat(String(rawRate)) : 0;
                       const finalTotal = parseFloat(String(target.final_total_amount ?? 0)) || 0;
-                      const expectedTotal = subtotal + (isNaN(taxAmt) ? 0 : taxAmt);
-                      const mismatch = subtotal > 0 && Math.abs(expectedTotal - finalTotal) > 0.5;
+                      const rawDiscount = target.discount_amount;
+                      const discountAmt = rawDiscount != null && rawDiscount !== "NULL" && rawDiscount !== "" ? parseFloat(String(rawDiscount)) : 0;
+                      const netSubtotal = subtotal - (isNaN(discountAmt) ? 0 : discountAmt);
+                      const expectedTotal = netSubtotal + (isNaN(taxAmt) ? 0 : taxAmt);
+                      // Prices that already include the VAT add up without it.
+                      const mismatch = subtotal > 0 && Math.abs(expectedTotal - finalTotal) > 0.5 && Math.abs(netSubtotal - finalTotal) > 0.5;
 
                       // Typing a tax rate auto-computes the tax amount from the subtotal
                       const handleRateChange = (val: string) => {
@@ -1056,6 +1062,16 @@ export default function AnalysisDetailPage() {
                                 className="ml-2 w-28 rounded border border-[var(--border)] px-2 py-1 text-right text-[13px]"
                               />
                             </div>
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-[var(--text-1)]">{lang === "si" ? "වට්ටම (Discount)" : "Discount"}</span>
+                              <input
+                                type="number" min="0" step="0.01"
+                                value={rawDiscount != null && rawDiscount !== "NULL" ? String(rawDiscount) : ""}
+                                onChange={(e) => updateField("discount_amount", e.target.value)}
+                                placeholder="0.00"
+                                className="ml-2 w-28 rounded border border-[var(--border)] px-2 py-1 text-right text-[13px]"
+                              />
+                            </div>
                             <div className="flex items-center justify-between border-t border-[var(--border)] pt-2">
                               <span className="font-semibold text-[var(--text-1)]">{lang === "si" ? "අපේක්ෂිත එකතුව" : "Expected Total"}</span>
                               <span className={`font-bold ${mismatch ? "text-[var(--danger)]" : "text-[var(--success)]"}`}>{cur} {expectedTotal.toFixed(2)}</span>
@@ -1072,14 +1088,22 @@ export default function AnalysisDetailPage() {
                       }
 
                       // Read-only view
-                      if (!isNaN(taxAmt) && taxAmt > 0) {
+                      if ((!isNaN(taxAmt) && taxAmt > 0) || (!isNaN(discountAmt) && discountAmt > 0)) {
                         const label = !isNaN(taxRate) && taxRate > 0 ? `Tax (${taxRate}%)` : "Tax";
                         return (
                           <div className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="font-semibold text-[var(--text-1)]">{label}</span>
-                              <span className="font-bold text-[var(--brand-mid)]">{cur} {taxAmt.toFixed(2)}</span>
-                            </div>
+                            {discountAmt > 0 && (
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-[var(--text-1)]">{lang === "si" ? "වට්ටම" : "Discount"}</span>
+                                <span className="font-bold text-[var(--brand-mid)]">- {cur} {discountAmt.toFixed(2)}</span>
+                              </div>
+                            )}
+                            {taxAmt > 0 && (
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-[var(--text-1)]">{label}</span>
+                                <span className="font-bold text-[var(--brand-mid)]">{cur} {taxAmt.toFixed(2)}</span>
+                              </div>
+                            )}
                             {mismatch && (
                               <p className="rounded-lg bg-[var(--danger-tint)] px-3 py-2 text-[12px] text-[var(--danger)]">
                                 {lang === "si"

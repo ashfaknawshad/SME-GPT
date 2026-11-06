@@ -66,6 +66,32 @@ def preferred_amount(row):
     return amount
 
 
+def document_total(row):
+    """What a document is actually worth: its final total, after discounts and
+    including VAT. Only when no total was saved is it rebuilt from the items."""
+    amount = preferred_amount(row)
+    if amount != 0.0:
+        return amount
+    lines = 0.0
+    for item in extract_items_from_row(row):
+        line = to_float(item.get("line_total")) or to_float(item.get("quantity")) * to_float(item.get("unit_price"))
+        lines += line
+    if lines == 0.0:
+        return 0.0
+    return round(lines - to_float(row.get("discount_amount")) + to_float(row.get("tax_amount")), 2)
+
+
+def _amount_with_structured_fallback(df, structured, field):
+    """A figure from its DB column, else from structured_json. Documents saved
+    before tax was persisted only have it there, and discount has no column."""
+    column = df[field] if field in df.columns else pd.Series([None] * len(df), index=df.index)
+    values = []
+    for value, fallback in zip(column, structured):
+        amount = to_float(value)
+        values.append(amount if amount else abs(to_float(fallback.get(field))))
+    return values
+
+
 def extract_items_from_row(row):
     items = row.get("items", [])
 
@@ -119,6 +145,9 @@ def enrich_dataset(df: pd.DataFrame):
     df["received_status"] = structured.apply(lambda x: x.get("received_status", "NULL"))
     df["paid_status"] = structured.apply(lambda x: x.get("paid_status", "NULL"))
     df["items"] = structured.apply(lambda x: x.get("items", []))
+    df["tax_amount"] = _amount_with_structured_fallback(df, structured, "tax_amount")
+    df["tax_rate"] = _amount_with_structured_fallback(df, structured, "tax_rate")
+    df["discount_amount"] = _amount_with_structured_fallback(df, structured, "discount_amount")
 
     numeric_cols = ["raw_total_amount", "final_total_amount", "payable_amount"]
     for col in numeric_cols:
@@ -754,6 +783,9 @@ def build_evidence(records: pd.DataFrame, reason: str):
             "currency": row.get("currency", "NULL"),
             "final_total_amount": float(row.get("final_total_amount", 0) or 0),
             "payable_amount": float(row.get("payable_amount", 0) or 0),
+            "tax_amount": to_float(row.get("tax_amount")),
+            "tax_rate": to_float(row.get("tax_rate")),
+            "discount_amount": to_float(row.get("discount_amount")),
             "amount_used": amount_used,
             "items": extract_items_from_row(row),
             "reason_used": reason,

@@ -21,7 +21,7 @@ from llm_client import call_llm
 from pal_answer import generate_pal_answer
 from pal_executor import execute_plan
 from pal_planner import plan_query
-from pal_scope import build_row_records, resolve_scope, resolve_scope_with_rag
+from pal_scope import resolve_scope, resolve_scope_with_rag, rows_for_plan
 from pal_validator import validate_plan
 
 MAX_RETRIES = 2
@@ -243,8 +243,6 @@ def answer_financial_question(
     if scope_error:
         return _empty_scope_answer(scope_error)
 
-    rows = build_row_records(documents_df)
-
     plan = None
     error_reason = None
     attempts = []
@@ -265,6 +263,7 @@ def answer_financial_question(
         # (component-3.md failure table: degrade to best available).
         return _legacy_answer(question, company_name, user_id, audit_extra={"pal_attempts": attempts})
 
+    rows = rows_for_plan(plan, documents_df)
     computed = execute_plan(plan, rows)
 
     if not computed.get("row_count"):

@@ -28,6 +28,7 @@ AGGREGATIONS = {"sum", "avg", "count", "max", "min"}
 CANONICAL_FIELDS = {
     "item", "description", "qty", "unit_price", "total", "tax", "discount",
     "currency", "doc_date", "vendor", "flow_type", "paid_status", "received_status",
+    "document_type",
 }
 
 _NEEDS_MEASURE = {"aggregate_sum", "aggregate_avg", "aggregate_count", "group_by_sum", "compare"}

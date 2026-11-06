@@ -250,6 +250,7 @@ def normalize_root_fields(parsed: dict, source_text: str) -> dict:
         parsed["final_total_amount"] = ""
         parsed["payable_amount"]    = ""
         parsed["cash_return"]       = ""
+        parsed["discount_amount"]   = ""
         parsed["paid_status"]       = "NULL"
         # Strip prices from items — only description + qty matter on a DN
         for item in parsed.get("items", []):
@@ -323,6 +324,8 @@ def normalize_root_fields(parsed: dict, source_text: str) -> dict:
         "cash_return": normalize_number(parsed.get("cash_return")),
         "tax_amount": normalize_ocr_money(parsed.get("tax_amount")) if parsed.get("tax_amount") not in (None, "", "NULL") else "NULL",
         "tax_rate": normalize_number(parsed.get("tax_rate")) if parsed.get("tax_rate") not in (None, "", "NULL") else "NULL",
+        "discount_amount": normalize_ocr_money(parsed.get("discount_amount")) if parsed.get("discount_amount") not in (None, "", "NULL") else "NULL",
+        "discount_rate": normalize_number(parsed.get("discount_rate")) if parsed.get("discount_rate") not in (None, "", "NULL") else "NULL",
         "received_status": str(parsed.get("received_status", "")).strip(),
         "paid_status": str(parsed.get("paid_status", "")).strip(),
         "language": language,
@@ -375,6 +378,8 @@ Default currency to "LKR" if not stated.
   "cash_return": "",
   "tax_amount": "",
   "tax_rate": "",
+  "discount_amount": "",
+  "discount_rate": "",
   "received_status": "",
   "paid_status": "",
   "items": [
@@ -564,6 +569,16 @@ TAX — only extract what is EXPLICITLY printed:
 - tax_rate: percentage printed (e.g. "VAT 18%" → "18")
 - Do NOT calculate tax from subtotal
 
+DISCOUNT — only extract what is EXPLICITLY printed:
+- discount_amount: actual rupee amount, as a positive number (e.g. "Discount: (500.00)" → "500.00")
+- discount_rate: percentage printed (e.g. "Discount 10%" → "10")
+- Do NOT calculate discount from subtotal
+
+TOTALS WITH TAX OR DISCOUNT:
+- raw_total_amount: the printed subtotal (before tax and discount), or the total if no subtotal is printed
+- final_total_amount: the amount finally due, after discount and tax, exactly as printed
+- VAT, tax and discount lines are NOT items: never add them to "items"
+
 REFERENCE NUMBERS (used to connect PO -> Delivery Note -> Invoice -> Receipt; copy exactly as printed, "" if absent):
 - doc_number: THIS document's own number (Invoice No / Inv # / PO No on a purchase order / DN No / Delivery Note No / Receipt No / Bill No / ඉන්වොයිස් අංකය / රිසිට් අංකය)
 - po_ref: the PURCHASE ORDER this document refers to, printed on a delivery note, invoice or receipt (PO No / P.O. # / Your Order No / Order Ref / Purchase Order / ඇණවුම් අංකය). Never copy doc_number here.
@@ -616,6 +631,8 @@ Return ONLY the JSON object matching this structure (no extra text):
   "cash_return": "",
   "tax_amount": "",
   "tax_rate": "",
+  "discount_amount": "",
+  "discount_rate": "",
   "received_status": "",
   "paid_status": "",
   "due_date": "",

@@ -48,12 +48,14 @@ def _nonzero(value):
 
 def compute_items_total(items: List[dict]) -> Dict[str, Any]:
     computed_total = 0.0
+    printed_line_total = 0.0
     valid_line_count = 0
     used_rows = []
 
     if not isinstance(items, list):
         return {
             "computed_total": None,
+            "printed_lines_total": None,
             "valid_line_count": 0,
             "used_rows": [],
         }
@@ -81,6 +83,7 @@ def compute_items_total(items: List[dict]) -> Dict[str, Any]:
         if chosen_line_total is not None:
             chosen_line_total = round2(chosen_line_total)
             computed_total += chosen_line_total
+            printed_line_total += explicit_line_total if explicit_line_total is not None else chosen_line_total
             valid_line_count += 1
             used_rows.append({
                 "index": idx,
@@ -92,6 +95,7 @@ def compute_items_total(items: List[dict]) -> Dict[str, Any]:
 
     return {
         "computed_total": round2(computed_total) if valid_line_count > 0 else None,
+        "printed_lines_total": round2(printed_line_total) if valid_line_count > 0 else None,
         "valid_line_count": valid_line_count,
         "used_rows": used_rows,
     }
@@ -107,12 +111,23 @@ def validate_arithmetic(fields: dict) -> dict:
     payable_amount = round2(to_float(fields.get("payable_amount")))
     cash_return = round2(to_float(fields.get("cash_return")))
     tax_amount = _nonzero(round2(to_float(fields.get("tax_amount"))))
+    discount_value = to_float(fields.get("discount_amount"))
+    discount_amount = _nonzero(round2(abs(discount_value))) if discount_value is not None else None
 
-    # A document total is consistent with its items if it equals the items sum,
-    # or the items sum plus the printed tax (e.g. VAT invoices).
-    expected_totals = [] if computed_items_total is None else [computed_items_total]
-    if computed_items_total is not None and tax_amount is not None:
-        expected_totals.append(round2(computed_items_total + tax_amount))
+    # A document total is consistent with its items if it equals the items sum
+    # with or without the printed tax (exclusive vs. VAT-inclusive prices) and
+    # discount. The printed line totals count too: a per-line discount makes
+    # them lower than qty x unit price.
+    expected_totals = []
+    for base in (computed_items_total, items_result["printed_lines_total"]):
+        if base is None:
+            continue
+        for adjustment in (0, tax_amount or 0, -(discount_amount or 0), (tax_amount or 0) - (discount_amount or 0)):
+            expected_totals.append(round2(base + adjustment))
+
+    items_net_total = None
+    if computed_items_total is not None:
+        items_net_total = round2(computed_items_total + (tax_amount or 0) - (discount_amount or 0))
 
     def _matches(value):
         return any(values_match(value, expected) for expected in expected_totals)
@@ -161,9 +176,9 @@ def validate_arithmetic(fields: dict) -> dict:
             status = "mismatch"
 
             if items_result["valid_line_count"] > 0:
-                # Items sum plus any printed tax (expected_totals[-1]).
-                recommended_final_total = expected_totals[-1]
-                recommended_payable_amount = expected_totals[-1]
+                # Items sum, less any printed discount, plus any printed tax.
+                recommended_final_total = items_net_total
+                recommended_payable_amount = items_net_total
     else:
         status = "low_confidence"
 

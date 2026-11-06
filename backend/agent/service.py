@@ -28,6 +28,8 @@ import uuid
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agent.graph import build_agent_graph
+from agent.guard import content_text, is_blocked_request
+from agent.language import REQUEST_REFUSED, detect_reply_language
 from agent.memory import get_checkpointer
 from agent.threads import record_turn, rename_thread
 from agent.tools import build_tools
@@ -116,6 +118,16 @@ def chat(question: str, user_id: str, company_name: str, thread_id: str | None =
     is_new_thread = thread_id is None
     thread_id = thread_id or f"{user_id}:{uuid.uuid4().hex}"
 
+    # Refused before any LLM call, so no wording can talk the model round.
+    if is_blocked_request(question):
+        refusal = REQUEST_REFUSED[detect_reply_language(question)]
+        record_turn(
+            thread_id=thread_id, user_id=user_id, company_name=company_name,
+            question=question, answer=refusal, evidence=[], trace=[],
+            document_id=document_id,
+        )
+        return {"success": True, "answer": refusal, "evidence": [], "trace": [], "thread_id": thread_id}
+
     tools, evidence = build_tools(user_id=user_id, company_name=company_name)
     checkpointer = get_checkpointer()
     graph = build_agent_graph(tools, checkpointer, company_name=company_name, document_id=document_id)
@@ -124,7 +136,7 @@ def chat(question: str, user_id: str, company_name: str, thread_id: str | None =
     result = graph.invoke({"messages": [HumanMessage(content=question)]}, config=config)
 
     final = result["messages"][-1]
-    answer_text = final.content if isinstance(final, AIMessage) else str(getattr(final, "content", ""))
+    answer_text = content_text(getattr(final, "content", ""))
     trace = extract_turn_trace(result["messages"])
 
     # Best-effort UI history (never fails the request) -- see agent/threads.py.

@@ -29,6 +29,8 @@ type PreviewData = {
   paid_status: string; items: PreviewItem[];
   tax_amount?: string | number;
   tax_rate?: string | number;
+  tax_inclusive?: boolean;
+  discount_amount?: string | number;
 };
 
 type StreamEvent = {
@@ -147,7 +149,8 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
     { key: "currency",           label: "Currency"             },
     { key: "tax_rate",           label: "Tax Rate (%)"         },
     { key: "tax_amount",         label: "Tax Amount"           },
-    { key: "final_total_amount", label: "Order Total (items + tax)", readonly: true },
+    { key: "discount_amount",    label: "Discount"             },
+    { key: "final_total_amount", label: "Order Total (items - discount + tax)", readonly: true },
     { key: "paid_status",        label: "PO Status",           opts: PO_STATUS_OPTS },
   ];
 
@@ -165,7 +168,8 @@ function getFieldRows(docType: string, flowType: string = ""): FieldRow[] {
     { key: "raw_total_amount",   label: "Raw Total (OCR)",     readonly: true },
     { key: "tax_rate",           label: "Tax Rate (%)"         },
     { key: "tax_amount",         label: "Tax Amount"           },
-    { key: "final_total_amount", label: "Final Total (items + tax)", readonly: true },
+    { key: "discount_amount",    label: "Discount"             },
+    { key: "final_total_amount", label: "Final Total (items - discount + tax)", readonly: true },
     { key: "payable_amount",     label: "Payable / Receivable",readonly: true },
     { key: "cash_return",        label: "Cash Return"          },
     { key: "received_status",    label: "Received Status",     opts: RECEIVED_STATUS_OPTS },
@@ -305,9 +309,11 @@ export default function UploadPage() {
     return s === "" || s.toUpperCase() === "NULL" ? 1 : parseAmt(s);
   };
 
-  // Final total is never typed in: it is always sum(qty x unit price) + tax.
-  // A tax rate (%) wins over a typed tax amount and recomputes it from the
-  // subtotal. DNs carry no amounts and are left as extracted.
+  // Final total is never typed in: it is always sum(qty x unit price) - discount
+  // + tax. A tax rate (%) wins over a typed tax amount and recomputes it from the
+  // discounted subtotal. When the prices already include the VAT (tax_inclusive,
+  // set by the backend) it isn't added again. DNs carry no amounts and are left
+  // as extracted.
   const recalculate = (p: PreviewData): PreviewData => {
     if (String(p.document_type || "").toLowerCase() === "dn") return p;
     const items = (p.items || []).map((item) => {
@@ -316,9 +322,14 @@ export default function UploadPage() {
     });
     const subtotal = items.reduce((s, i) => s + parseAmt(i.line_total), 0);
     if (subtotal <= 0) return { ...p, items };  // no priced items: keep extracted total
+    const taxable = subtotal - Math.max(0, parseAmt(p.discount_amount ?? 0));
+    if (p.tax_inclusive) {
+      const inclusiveTotal = +taxable.toFixed(2);
+      return { ...p, items, final_total_amount: inclusiveTotal, payable_amount: inclusiveTotal };
+    }
     const rate = parseAmt(p.tax_rate ?? 0);
-    const taxAmount = rate > 0 ? +(subtotal * rate / 100).toFixed(2) : Math.max(0, parseAmt(p.tax_amount ?? 0));
-    const total = +(subtotal + taxAmount).toFixed(2);
+    const taxAmount = rate > 0 ? +(taxable * rate / 100).toFixed(2) : Math.max(0, parseAmt(p.tax_amount ?? 0));
+    const total = +(taxable + taxAmount).toFixed(2);
     return {
       ...p, items,
       tax_amount: rate > 0 ? taxAmount : p.tax_amount,
@@ -524,7 +535,9 @@ export default function UploadPage() {
       const finalT = parseAmt(toSave.final_total_amount);
       // Only when OCR actually read a raw total (NULL / blank isn't a mismatch).
       const rawT = parseAmt(toSave.raw_total_amount);
-      const rawDiffers = rawT > 0 && finalT > 0 && Math.abs(rawT - finalT) > 0.01;
+      // The raw total may be the printed subtotal, before tax and discount.
+      const subtotal = (toSave.items || []).reduce((s, i) => s + parseAmt(i.line_total), 0);
+      const rawDiffers = rawT > 0 && finalT > 0 && Math.abs(rawT - finalT) > 0.01 && Math.abs(rawT - subtotal) > 0.01;
       if (rawDiffers) { setShowAmountMismatch(true); return; }
     }
 
@@ -994,10 +1007,12 @@ export default function UploadPage() {
                             const v = e.target.value;
                             if (row.key === "tax_rate") {
                               // Rate drives the tax amount; total follows.
-                              setPreview(recalculate({ ...preview, tax_rate: v }));
+                              setPreview(recalculate({ ...preview, tax_rate: v, tax_inclusive: false }));
                             } else if (row.key === "tax_amount") {
                               // A typed tax amount replaces any rate.
-                              setPreview(recalculate({ ...preview, tax_amount: v, tax_rate: "" }));
+                              setPreview(recalculate({ ...preview, tax_amount: v, tax_rate: "", tax_inclusive: false }));
+                            } else if (row.key === "discount_amount") {
+                              setPreview(recalculate({ ...preview, discount_amount: v }));
                             } else {
                               setPreview({ ...preview, [row.key]: v });
                             }

@@ -141,6 +141,7 @@ def build_row_records(documents_df: pd.DataFrame) -> list[dict]:
 
         base = {
             "document_id": doc.get("document_id", "NULL"),
+            "document_type": dt.normalize_text(doc.get("document_type")) or "NULL",
             "doc_date": doc.get("date", "NULL"),
             "vendor": doc.get("supplier_name", "NULL"),
             "flow_type": dt.normalize_flow(doc.get("effective_flow_type") or doc.get("flow_type")),
@@ -184,3 +185,36 @@ def build_row_records(documents_df: pd.DataFrame) -> list[dict]:
                 "discount": None,
             })
     return rows
+
+
+def build_document_rows(documents_df: pd.DataFrame) -> list[dict]:
+    """One row per document, carrying its final total plus its tax and discount.
+    Line items sum to the pre-VAT, pre-discount subtotal, so summing them would
+    misstate what any invoice with VAT or a discount is actually worth."""
+    rows: list[dict] = []
+    for _, doc in documents_df.iterrows():
+        one_doc = doc.to_frame().T.assign(items=[[]])
+        row = build_row_records(one_doc)[0]
+        amount = dt.document_total(doc)
+        row.update({
+            "unit_price": amount, "total": amount,
+            "tax": dt.to_float(doc.get("tax_amount")),
+            "discount": dt.to_float(doc.get("discount_amount")),
+        })
+        rows.append(row)
+    return rows
+
+
+_LINE_LEVEL_FIELDS = {"item", "description", "qty", "unit_price"}
+
+
+def rows_for_plan(plan: dict, documents_df: pd.DataFrame) -> list[dict]:
+    """Line-item rows only when the plan is really about items (a product, a
+    quantity, a unit price); document rows otherwise, so totals and counts
+    reflect each document once, after VAT and discounts."""
+    fields = {(plan.get("measure") or {}).get("field")} | set(plan.get("group_by") or [])
+    filter_sets = [plan.get("filters") or []] + list(plan.get("compare_filters") or [])
+    fields |= {f.get("field") for filter_set in filter_sets for f in filter_set if isinstance(f, dict)}
+    if fields & _LINE_LEVEL_FIELDS:
+        return build_row_records(documents_df)
+    return build_document_rows(documents_df)

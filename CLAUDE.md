@@ -15,7 +15,7 @@ Full-stack document processing and financial query system for Sri Lankan SMEs. U
 | Backend | Python 3.12, FastAPI, Uvicorn |
 | Frontend | Next.js 16.2, React 19, TypeScript 5, Tailwind CSS 4 |
 | Database | PostgreSQL via Supabase (psycopg + psycopg_pool on backend, Prisma 7 on frontend) |
-| LLM | Cloud-only via `llm_client.py` (local Ollama removed). **Both** tiers route to Gemini if `GEMINI_API_KEY` set, else DeepSeek. **Query** = `call_llm` (PAL planner/answer, Q&A); **Pipeline** = `call_pipeline_llm` (OCR correction, extraction). No local fallback: if no provider is configured/reachable, `LLMUnavailableError` is raised. See the PRIVACY TRADE-OFF note atop `llm_client.py`. |
+| LLM | Cloud-only via `llm_client.py` (local Ollama removed). **Query** = `call_llm` + the agent (PAL planner/answer, Q&A): DeepSeek (the agent has no other provider). **Pipeline** = `call_pipeline_llm` (OCR correction, extraction): DeepSeek by default, overridable with `PIPELINE_LLM_PROVIDER`. No local fallback: if no provider is configured/reachable, `LLMUnavailableError` is raised. See the PRIVACY TRADE-OFF note atop `llm_client.py`. |
 | OCR | Surya OCR — remote via Google Colab (primary), local Surya fallback |
 | Embeddings | `intfloat/multilingual-e5-small` via sentence-transformers (384-dim, CPU, supports Sinhala) |
 | Auth | JWT + bcrypt, optional 2FA, device trust |
@@ -28,7 +28,7 @@ Full-stack document processing and financial query system for Sri Lankan SMEs. U
 
 ### LLM provider (required before starting backend)
 Local Ollama has been removed. Set at least one cloud key in `backend/.env`:
-`DEEPSEEK_API_KEY` (default provider) or `GEMINI_API_KEY` (preferred when set).
+`DEEPSEEK_API_KEY` (the provider in use) or, only without it, `GEMINI_API_KEY`.
 The backend raises `LLMUnavailableError` on LLM calls if neither is configured.
 
 ### Backend
@@ -68,8 +68,8 @@ python scripts/run_migration.py migrations/006_po_dn_workflow.sql
 
 ### backend/.env
 ```
-DEEPSEEK_API_KEY=        # default cloud LLM provider (both tiers)
-GEMINI_API_KEY=          # optional; preferred over DeepSeek when set
+DEEPSEEK_API_KEY=        # the cloud LLM provider (both tiers)
+GEMINI_API_KEY=          # optional; only used without a DeepSeek key (never by the agent)
 # At least one of DEEPSEEK_API_KEY / GEMINI_API_KEY must be set (no local fallback)
 COLAB_OCR_URL=           # ngrok URL of running Colab notebook
 POPPLER_PATH=            # e.g. C:\poppler\bin on Windows
@@ -236,6 +236,7 @@ DN tab: Pending / Delivered / Delayed / Partial / Failed / Returned
 ## Architecture Invariants
 
 - **LLM never computes numbers.** The PAL validator rejects any plan whose fields or operators fall outside the canonical allow-list before it reaches the executor. All arithmetic is pandas.
+- **Money totals are document-level.** A document is worth its final total (`final = items - discount + tax`, or `items - discount` for VAT-inclusive prices); `pal_scope.rows_for_plan` only uses line-item rows when a plan is about items. Profit is `profit_summary.compute_profit_summary`: POs/DNs don't count, and neither do receipts settling a linked invoice. `discount_amount` lives in `structuredJson` (no DB column).
 - **Tenant isolation is non-negotiable.** Every DB read/write filters by `tenantId = user_id` from the JWT. `pal_scope.py`, `data_tools.filter_user_context()`, and every `load_records()` call enforce this.
 - **Graceful degradation everywhere.** PAL falls back to the legacy engine on any failure (including LLM outage — `LLMUnavailableError`); answer generators fall back to deterministic templates and OCR correction falls back to raw text. C4 graph expansion, RAG retrieval, and vector indexing all degrade silently to SQL-only scope if unavailable. Note: there is **no local LLM fallback** — extraction genuinely needs a cloud provider and surfaces a friendly error without one.
 - **RAG (C2 spatial chunking → embeddings → pgvector) is wired live** (Iteration 9). On confirm-save, `app.py::_post_save_enrich` (background task) builds SpatialChunks from the C1 safe-boxes, embeds them (`intfloat/multilingual-e5-small`), and upserts to `ChunkEmbedding` (pgvector + HNSW). Retrieval (`vector_index.retrieve_top_k`, **hybrid dense+lexical RRF**) feeds `pal_scope.resolve_scope_with_rag`, used by `/ask-query` and the agent's `search_documents`. Verified live: 254 chunks across 13 docs, end-to-end retrieval working. Line items are reconstructed from **raw OCR geometry, with no table-detection model**: the live OCR (Surya v1 via Colab) emits no `table_id`/`row_index`/`col_index`, so when a header row is detected without one, `build_spatial_chunks` binds the rows beneath it to the header's column positions, stopping at a totals/summary row, a large vertical gap, or a misaligned row (`_geometric_table_ends`). `is_table_header` gates it (≥2 cells, ≥2 distinct canonical fields) so a shop address or a grand-total line can't anchor a table. It's a heuristic, biased toward stopping early — see docs/components/component-2.md. Surya v2's `table_id` path is unchanged and takes precedence when present. RAG degrades silently to SQL/C4-only scope if embeddings/pgvector are unavailable.

@@ -28,5 +28,4 @@ langgraph>=1.2,<2.0
 langchain-core>=0.3
 langchain-openai>=0.3          # DeepSeek is OpenAI-compatible; also used if GEMINI routes here
 langgraph-checkpoint-postgres>=2.0
-# langchain-google-genai is optional — only needed if GEMINI_API_KEY is set for the
-# agent engine; install it separately (see agent/llm.py) rather than forcing it here.
+# The agent engine runs on DeepSeek only (see agent/llm.py).

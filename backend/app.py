@@ -872,6 +872,8 @@ def to_preview_data(fields: dict) -> dict:
         "cash_return": safe_number(fields.get("cash_return")),
         "tax_amount": safe_number(fields.get("tax_amount")),
         "tax_rate": safe_number(fields.get("tax_rate")),
+        "tax_inclusive": bool(fields.get("tax_inclusive")),
+        "discount_amount": safe_number(fields.get("discount_amount")),
         "cash_inflowed": safe_number(fields.get("cash_inflowed")),
         "cash_outflowed": safe_number(fields.get("cash_outflowed")),
         "category": safe_text(fields.get("category", "Unknown")),
@@ -909,6 +911,7 @@ def merge_edited_preview_into_fields(original_fields: dict, edited_preview: dict
         "cash_return",
         "tax_amount",
         "tax_rate",
+        "discount_amount",
         "cash_inflowed",
         "cash_outflowed",
         "received_status",
@@ -925,7 +928,7 @@ def merge_edited_preview_into_fields(original_fields: dict, edited_preview: dict
 
         if key == "items":
             merged[key] = normalize_items(edited_preview.get("items", []))
-        elif key in {"raw_total_amount", "final_total_amount", "payable_amount", "cash_return", "tax_amount", "tax_rate", "cash_inflowed", "cash_outflowed"}:
+        elif key in {"raw_total_amount", "final_total_amount", "payable_amount", "cash_return", "tax_amount", "tax_rate", "discount_amount", "cash_inflowed", "cash_outflowed"}:
             merged[key] = safe_number(edited_preview.get(key))
         else:
             merged[key] = safe_text(edited_preview.get(key))
@@ -1182,6 +1185,7 @@ class UpdateDocumentRequest(BaseModel):
     items: Optional[List[dict]] = None
     tax_amount: Optional[Any] = None
     tax_rate: Optional[Any] = None
+    discount_amount: Optional[Any] = None
     # IT-27 — PO approval workflow
     po_status: Optional[str] = None
     approved_by: Optional[str] = None
@@ -1572,7 +1576,7 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
     _ALLOWED_PREVIEW_KEYS = {
         "document_type", "order_id", "po_ref", "flow_type", "company_name", "supplier_name",
         "date", "currency", "raw_total_amount", "final_total_amount", "payable_amount",
-        "cash_return", "tax_amount", "tax_rate",
+        "cash_return", "tax_amount", "tax_rate", "tax_inclusive", "discount_amount",
         "cash_inflowed", "cash_outflowed", "category",
         "received_status", "paid_status", "language", "items",
         "raw_text", "corrected_text",
@@ -1749,7 +1753,7 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
     if "items" in update_data:
         update_data["items"] = normalize_items(update_data.get("items", []))
 
-    for numeric_key in ["raw_total_amount", "final_total_amount", "payable_amount", "cash_return", "cash_inflowed", "cash_outflowed", "tax_amount", "tax_rate"]:
+    for numeric_key in ["raw_total_amount", "final_total_amount", "payable_amount", "cash_return", "cash_inflowed", "cash_outflowed", "tax_amount", "tax_rate", "discount_amount"]:
         if numeric_key in update_data:
             update_data[numeric_key] = safe_number(update_data[numeric_key])
 
@@ -3325,6 +3329,11 @@ def pnl_report(
                 except ValueError:
                     pass
 
+        # Purchase orders are commitments and delivery notes carry no amounts:
+        # neither is revenue or an expense (same rule as profit_summary.py).
+        if str(r.get("document_type") or "").lower() in ("po", "dn"):
+            continue
+
         ft = str(r.get("effective_flow_type") or r.get("flow_type") or "").lower()
         if ft in ("receivable", "cash_inflow", "income"):
             buckets[key]["revenue"] += amt
@@ -3470,6 +3479,14 @@ def chat(payload: ChatRequest, authorization: str = Header(default=None)):
         )
     except LLMUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        # Every provider failed, or the checkpointer did. The user still gets a
+        # calm message and a working chat instead of a 500.
+        print(f"[CHAT] agent turn failed: {type(exc).__name__}: {exc}", flush=True)
+        raise HTTPException(
+            status_code=503,
+            detail="The assistant couldn't answer just now. Your documents are safe — please try again in a moment.",
+        )
 
     _log_audit_event(user_id, "AGENT_CHAT_EXECUTED",
                      f"Q: {payload.question.strip()[:120]} | co: {payload.company_name.strip()}")

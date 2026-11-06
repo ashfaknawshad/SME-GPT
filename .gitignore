@@ -39,3 +39,4 @@ frontend/nul
 
 # Generated eval reports (backend/scripts/eval_answer_quality.py output)
 backend/eval_reports/
+backend/.env.redundant
