@@ -182,6 +182,13 @@ effective value, and keep the raw one in `original_flow_type`.
   ```
   **Not found:** 404.
 
+### 5b. `POST /documents/{document_id}/verify-totals`  — clear an arithmetic warning
+- **Auth:** required, write role. **Body:** none. A person checked the document and its
+  totals are right: `arithmetic_status` becomes `verified` and no amount changes. Changing
+  the figures later runs the check again.
+- **Response:** `{ "success": true, "document": { ...DocumentRecord } }`.
+  **No warning to clear:** 400. **Not found:** 404.
+
 ### 6. `DELETE /documents/{document_id}`
 - **Auth:** required. **Response:**
   `{ "success": true, "message": "...", "document_id": "string" }`. **Not found:** 404.

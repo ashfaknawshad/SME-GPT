@@ -6,6 +6,11 @@ note (DN4, no amounts), a receipt whose items were corrected after extraction
 """
 import json
 
+import jwt as pyjwt
+from fastapi.testclient import TestClient
+
+import app as app_mod
+
 from arithmetic_validator import effective_arithmetic_status, revalidate_after_edit, validate_arithmetic
 from dataset_manager import parse_record_for_output
 
@@ -108,3 +113,71 @@ def test_an_edit_that_breaks_the_arithmetic_raises_a_warning():
     before = {"document_type": "invoice", "items": [_line(10, 100)], "final_total_amount": 1000.0}
     after = {**before, "final_total_amount": 1500.0}
     assert revalidate_after_edit(before, after)["status"] == "mismatch"
+
+
+def test_verified_stays_verified_when_read():
+    record = _saved("po", [_line(3, 2500), _line(3, 500), _line(5, 450)], 11250.0,
+                    _discrepancies(2500.0, 11250.0), computed=11250.0)
+    assert parse_record_for_output(record)["arithmetic_status"] == "mismatch"
+    assert parse_record_for_output({**record, "arithmetic_status": "verified"})["arithmetic_status"] == "verified"
+
+
+def test_changing_the_figures_of_a_verified_document_checks_it_again():
+    before = {"document_type": "po", "arithmetic_status": "verified", "items": [_line(3, 2500)], "final_total_amount": 7500.0}
+    after = {**before, "final_total_amount": 9000.0}
+    assert revalidate_after_edit(before, after)["status"] == "mismatch"
+
+
+# ── POST /documents/{id}/verify-totals ────────────────────────────────────────
+
+client = TestClient(app_mod.app, raise_server_exceptions=False)
+
+
+def _auth(role="owner"):
+    token = pyjwt.encode({"userId": "u1", "role": role}, app_mod.JWT_SECRET, algorithm=app_mod.JWT_ALGORITHM)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _patch_verify(monkeypatch, status):
+    writes = []
+    monkeypatch.setattr(app_mod, "get_record_by_id_for_user",
+                        lambda user_id, document_id: {"document_id": document_id, "arithmetic_status": status} if status else None)
+
+    def fake_update(user_id, document_id, updates):
+        writes.append((user_id, document_id, updates))
+        return {"document_id": document_id, **updates}
+    monkeypatch.setattr(app_mod, "update_record_for_user", fake_update)
+    monkeypatch.setattr(app_mod, "_log_audit_event", lambda *a, **k: None)
+    return writes
+
+
+def test_verify_clears_the_warning_without_touching_any_amount(monkeypatch):
+    writes = _patch_verify(monkeypatch, "mismatch")
+    res = client.post("/documents/PO1/verify-totals", headers=_auth())
+    assert res.status_code == 200
+    assert res.json()["document"]["arithmetic_status"] == "verified"
+    assert writes == [("u1", "PO1", {"arithmetic_status": "verified"})]
+
+
+def test_verify_refuses_a_document_with_no_warning(monkeypatch):
+    writes = _patch_verify(monkeypatch, "matched")
+    assert client.post("/documents/IN1/verify-totals", headers=_auth()).status_code == 400
+    assert writes == []
+
+
+def test_verify_returns_404_for_a_document_outside_the_tenant(monkeypatch):
+    writes = _patch_verify(monkeypatch, None)
+    assert client.post("/documents/PO1/verify-totals", headers=_auth()).status_code == 404
+    assert writes == []
+
+
+def test_verify_requires_a_login(monkeypatch):
+    writes = _patch_verify(monkeypatch, "mismatch")
+    assert client.post("/documents/PO1/verify-totals").status_code == 401
+    assert writes == []
+
+
+def test_verify_is_refused_for_a_read_only_role(monkeypatch):
+    writes = _patch_verify(monkeypatch, "mismatch")
+    assert client.post("/documents/PO1/verify-totals", headers=_auth(role="viewer")).status_code == 403
+    assert writes == []

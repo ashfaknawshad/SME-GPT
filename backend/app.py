@@ -1752,6 +1752,32 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
     }
 
 
+@app.post("/documents/{document_id}/verify-totals")
+def verify_document_totals(document_id: str, authorization: str = Header(default=None)):
+    """A person checked a flagged document against the original and its totals are
+    right: the warning clears without changing any amount. Changing the figures
+    later runs the arithmetic check again (revalidate_after_edit)."""
+    user_id = get_current_user_id(authorization)
+    require_write_role(authorization)
+
+    existing = get_record_by_id_for_user(user_id=user_id, document_id=document_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if str(existing.get("arithmetic_status") or "").lower() != "mismatch":
+        raise HTTPException(status_code=400, detail="This document has no arithmetic warning to clear.")
+
+    updated = update_record_for_user(
+        user_id=user_id,
+        document_id=document_id,
+        updates={"arithmetic_status": "verified"},
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    _log_audit_event(user_id, "TOTALS_VERIFIED", f"document_id={document_id}")
+    return {"success": True, "document": updated}
+
+
 @app.put("/documents/{document_id}")
 def update_document(document_id: str, payload: UpdateDocumentRequest, authorization: str = Header(default=None)):
     user_id = get_current_user_id(authorization)
