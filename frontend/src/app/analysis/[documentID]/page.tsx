@@ -259,6 +259,38 @@ export default function AnalysisDetailPage() {
     }
   };
 
+  const handleVerifyTotals = async () => {
+    const question = lang === "si"
+      ? "ඔබ මෙම ලේඛනයේ එකතු මුල් පිටපත සමඟ පරීක්ෂා කළාද? අවවාදය ඉවත් වේ, මුදල් වෙනස් නොවේ."
+      : "Have you checked these totals against the original document? The warning will clear and no amounts will change.";
+    if (!window.confirm(question)) return;
+
+    try {
+      setSaving(true);
+      setError("");
+      setSuccessMessage("");
+
+      const token = getAuthToken();
+      const res = await fetch(`${BACKEND_URL}/documents/${documentId}/verify-totals`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.message || "Failed to verify the totals.");
+      }
+
+      setDocument(data.document);
+      setEditedDocument(data.document);
+      setSuccessMessage(lang === "si" ? "එකතු තහවුරු කෙරිණි." : "Totals verified.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to verify the totals.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!editedDocument) return;
 
@@ -587,7 +619,7 @@ export default function AnalysisDetailPage() {
                     <span
                       className="rounded-lg px-3 py-1.5 text-[11px] font-bold"
                       style={
-                        target.arithmetic_status === "matched"
+                        target.arithmetic_status === "matched" || target.arithmetic_status === "verified"
                           ? { background: "rgba(22,163,74,0.08)", color: "#16a34a" }
                           : target.arithmetic_status === "mismatch"
                           ? { background: "rgba(220,38,38,0.08)", color: "#dc2626" }
@@ -595,11 +627,31 @@ export default function AnalysisDetailPage() {
                       }
                     >
                       {target.arithmetic_status === "matched" ? "99% CONFIDENCE"
+                        : target.arithmetic_status === "verified" ? "TOTALS VERIFIED"
                         : target.arithmetic_status === "mismatch" ? "VERIFY TOTALS"
                         : "OCR PROCESSED"}
                     </span>
                   </div>
                 </div>
+
+                {target.arithmetic_status === "mismatch" && !editMode && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-2.5"
+                    style={{ background: "var(--warn-tint)", border: "1px solid var(--warn-border)" }}>
+                    <p className="text-[12px] font-semibold" style={{ color: "var(--warn)" }}>
+                      {lang === "si"
+                        ? "මුළු එකතු අයිතම සමඟ නොගැලපේ. මුල් ලේඛනය සමඟ සසඳන්න."
+                        : "The totals don't match the items. Compare them with the original document."}
+                    </p>
+                    <button
+                      onClick={handleVerifyTotals}
+                      disabled={saving}
+                      className="rounded-lg px-3 py-1.5 text-[12px] font-bold text-white transition hover:opacity-90 disabled:opacity-60"
+                      style={{ background: "var(--brand-mid)" }}
+                    >
+                      {lang === "si" ? "එකතු නිවැරදියි" : "Totals verified"}
+                    </button>
+                  </div>
+                )}
 
                 {/* DN / PO notice badge */}
                 {(target.document_type === "dn" || target.document_type === "po") && (
