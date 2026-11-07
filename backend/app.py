@@ -1590,6 +1590,14 @@ def confirm_save(payload: ConfirmSaveRequest, authorization: str = Header(defaul
     original_fields = session["fields"]
     final_data = merge_edited_preview_into_fields(original_fields, payload.edited_preview)
 
+    # The arithmetic check ran on what was extracted: redo it if the user changed
+    # the figures in the preview, or a stale warning is saved with the document.
+    from arithmetic_validator import revalidate_after_edit
+    _revalidated = revalidate_after_edit(original_fields, final_data)
+    if _revalidated:
+        final_data["arithmetic_validation"] = _revalidated
+        final_data["arithmetic_status"] = _revalidated["status"]
+
     # ── Override company_name with the user's registered company ─────────────
     # The OCR may have extracted the ISSUING party's name (e.g. the shop's name
     # on a receipt). We always replace it with the user's own company so that
@@ -1789,6 +1797,13 @@ def update_document(document_id: str, payload: UpdateDocumentRequest, authorizat
         flow_changed_message = "Document fully received — flow changed from Receivable to Cash Inflow."
     elif effective_flow_type == "cash_outflow" and prev_flow == "payable":
         flow_changed_message = "Document fully paid — flow changed from Payable to Cash Outflow."
+
+    # Correcting a document's figures settles or raises its arithmetic warning.
+    from arithmetic_validator import revalidate_after_edit
+    _revalidated = revalidate_after_edit(existing, {**existing, **update_data})
+    if _revalidated:
+        update_data["arithmetic_status"] = _revalidated["status"]
+        update_data["arithmetic_json"] = json.dumps(_revalidated, ensure_ascii=False).replace("\n", " ")
 
     updated = update_record_for_user(
         user_id=user_id,
@@ -2275,7 +2290,7 @@ def dashboard_summary(authorization: str = Header(default=None)):
         {"document_id": r.get("document_id"), "company_name": r.get("company_name"),
          "date": r.get("date"), "document_type": r.get("document_type")}
         for r in records if str(r.get("arithmetic_status", "")).lower() == "mismatch"
-    ][:3]
+    ]
 
     # ── Widget 1: Business Health Score ───────────────────────────────────────
     today = datetime.today()
@@ -2354,7 +2369,8 @@ def dashboard_summary(authorization: str = Header(default=None)):
         "total_receivable_amount": summary.get("total_receivable_amount", 0.0),
         "pending_processing_count": summary.get("pending_processing_count", 0),
         "ready_for_query_count": summary.get("ready_for_query_count", 0),
-        "mismatch_alerts": mismatch_docs,
+        "mismatch_alerts": mismatch_docs[:3],
+        "mismatch_total": len(mismatch_docs),
         # Feature 2 — Analytics widgets
         "health_score":      health_score,
         "top_receivables":   top_receivables,

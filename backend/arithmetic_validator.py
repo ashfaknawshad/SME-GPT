@@ -182,6 +182,13 @@ def validate_arithmetic(fields: dict) -> dict:
     else:
         status = "low_confidence"
 
+    # Delivery notes carry no amounts, so there is nothing to add up.
+    if str(fields.get("document_type") or "").strip().lower() == "dn":
+        status = "not_checked"
+        discrepancies = []
+        recommended_final_total = final_total
+        recommended_payable_amount = payable_amount
+
     # Optional simple derived check for payable = final - cash_return
     payable_minus_cash = None
     if final_total is not None and cash_return is not None:
@@ -208,3 +215,45 @@ def validate_arithmetic(fields: dict) -> dict:
             "payable_amount": recommended_payable_amount,
         }
     }
+
+
+def _edit_figures(fields: dict) -> tuple:
+    amounts = [
+        compute_items_total(fields.get("items", []))["computed_total"],
+        to_float(fields.get("final_total_amount")),
+        to_float(fields.get("tax_amount")),
+        to_float(fields.get("discount_amount")),
+    ]
+    return str(fields.get("document_type") or "").strip().lower(), [abs(a or 0.0) for a in amounts]
+
+
+def revalidate_after_edit(before: dict, after: dict):
+    """A fresh validation when a person changed the document's type, items or
+    amounts, since their figures replace what was read off the paper. None when
+    nothing changed, so saving as-is can't clear a real mismatch."""
+    before_type, before_amounts = _edit_figures(before)
+    after_type, after_amounts = _edit_figures(after)
+    if before_type == after_type and all(values_match(a, b) for a, b in zip(before_amounts, after_amounts)):
+        return None
+    return validate_arithmetic(after)
+
+
+def effective_arithmetic_status(record: dict) -> str:
+    """A saved "mismatch" re-checked against the document's current items, tax and
+    discount, for flags saved before those were kept or before the items were
+    corrected. A real mismatch overwrites the final and payable totals with the
+    items' total, so only the printed figures kept in the stored discrepancies are
+    compared; the overwritten totals would always pass and hide the problem."""
+    stored = str(record.get("arithmetic_status") or "")
+    if stored.lower() != "mismatch":
+        return stored
+    validation = record.get("arithmetic_validation") or {}
+    printed = {
+        d["field"]: d["extracted"]
+        for d in validation.get("discrepancies") or []
+        if isinstance(d, dict) and d.get("field") and d.get("extracted") is not None
+    }
+    if not printed:
+        return validate_arithmetic(record)["status"]
+    no_totals = {"raw_total_amount": None, "final_total_amount": None, "payable_amount": None}
+    return validate_arithmetic({**record, **no_totals, **printed})["status"]

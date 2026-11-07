@@ -42,6 +42,7 @@ type SummaryData = {
   pending_processing_count?: number;
   ready_for_query_count?: number;
   mismatch_alerts?: MismatchAlert[];
+  mismatch_total?: number;
   // Feature 2 analytics
   health_score?:      HealthScore;
   top_receivables?:   BalanceEntry[];
@@ -760,7 +761,7 @@ export default function DashboardPage() {
                     <span className="material-symbols-outlined text-[20px]" style={{ color: "var(--warn)" }}>insights</span>
                     <p className="text-[14px] font-extrabold" style={{ color: "var(--warn)" }}>{t.insightsReady}</p>
                     <span className="ml-auto rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: "var(--warn-border)", color: "var(--warn)" }}>
-                      {alerts.length}
+                      {summary?.mismatch_total ?? alerts.length}
                     </span>
                   </div>
                   <div className="mt-3 space-y-3">

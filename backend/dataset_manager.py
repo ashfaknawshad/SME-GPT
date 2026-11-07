@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from psycopg.types.json import Jsonb
 
+from arithmetic_validator import effective_arithmetic_status
 from db import get_conn, new_id, run_with_retry
 
 INCOMING_JSON_DIR = "incoming_json"
@@ -406,6 +407,8 @@ def parse_record_for_output(record: dict):
             if str(parsed.get(field) or "").strip().upper() in ("", "NULL", "NONE", "0", "0.0"):
                 if structured.get(field) not in (None, "", "NULL"):
                     parsed[field] = structured[field]
+
+    parsed["arithmetic_status"] = effective_arithmetic_status(parsed)
 
     # Always compute category live — DB may be NULL for older records
     if not parsed.get("category") or parsed["category"] in ("NULL", "Unknown"):

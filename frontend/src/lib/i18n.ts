@@ -72,9 +72,9 @@ export const ui = {
     recentDocuments: "Recent Documents",
     viewAll: "View All",
     noSavedDocs: "No saved documents yet.",
-    insightsReady: "Invoice Insights Ready",
+    insightsReady: "Documents to Verify",
     insightsDescription: "System detected a price discrepancy in Invoice #1234 compared to the original PO.",
-    viewComparison: "View Comparison →",
+    viewComparison: "Review Document →",
 
     // ── Repository ────────────────────────────────────────────────────────────
     repositoryTitle: "Repository",
@@ -567,9 +567,9 @@ export const ui = {
     recentDocuments: "මෑත ලේඛන",
     viewAll: "සියල්ල බලන්න",
     noSavedDocs: "සුරකිගත් ලේඛන නොමැත.",
-    insightsReady: "ඉන්වොයිස් විශ්ලේෂණ සූදානම්",
+    insightsReady: "සත්‍යාපනය කළ යුතු ලේඛන",
     insightsDescription: "Invoice #1234 සහ මුල් PO අතර මිල වෙනසක් පද්ධතිය හඳුනාගෙන ඇත.",
-    viewComparison: "සැසඳීම බලන්න →",
+    viewComparison: "ලේඛනය සමාලෝචනය කරන්න →",
 
     // ── Repository ────────────────────────────────────────────────────────────
     repositoryTitle: "ලේඛන ගබඩාව",
