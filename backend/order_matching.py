@@ -123,6 +123,9 @@ def compute_order(docs: list[dict], links: list[dict]) -> dict:
     # Only goods marked delivered have arrived: a pending, delayed or returned
     # DN lists what should come, and a partially delivered DN overstates it.
     delivered_dns = [d for d in dns if _dn_delivery(d["record"]) == "delivered"]
+    # A partially delivered DN can't say how much arrived, so the order can't be
+    # complete while one is outstanding.
+    any_partial_dn = any(_dn_delivery(d["record"]) == "partial" for d in dns)
 
     if catalog:
         for dn in dns:
@@ -209,7 +212,8 @@ def compute_order(docs: list[dict], links: list[dict]) -> dict:
     elif qty_lines and delivered_dns and all(any(i["qty"] > 0 for i in d["items"]) for d in delivered_dns):
         # Delivered goods that match nothing on the PO stay "partial", so an
         # unrecognised item can never fulfil an order.
-        delivery_stage = "full" if all(l["delivered"] >= l["ordered"] for l in qty_lines) else "partial"
+        all_lines_met = all(l["delivered"] >= l["ordered"] for l in qty_lines)
+        delivery_stage = "full" if all_lines_met and not any_partial_dn else "partial"
     else:
         # No comparable quantities: fall back to the DNs' own delivery status.
         delivery_stage = _delivery_stage([d["record"] for d in dns])
@@ -273,6 +277,10 @@ def compute_order(docs: list[dict], links: list[dict]) -> dict:
                      "full" if all(r["status"] == "paid" for r in invoice_rows) else "partial")
 
     # ── status updates to persist ────────────────────────────────────────────
+    # PO delivery status follows its linked DNs both ways: it can also move
+    # back down (fulfilled -> partially_delivered -> approved/pending) when a
+    # DN is un-marked, removed, or was wrongly counted before. Manual terminal
+    # states (rejected/cancelled) are never touched.
     updates: list[dict] = []
     for po in pos:
         current = str(po["record"].get("po_status") or "").lower()
