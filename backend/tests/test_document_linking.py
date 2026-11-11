@@ -227,6 +227,58 @@ def test_full_delivery_marks_po_fulfilled_and_no_false_issues():
     assert any(u["field"] == "po_status" and u["to"] == "fulfilled" for u in view["updates"])
 
 
+def _po4_with_dn(po_status="approved", dn_extra=None, **po_extra):
+    po = prepare(rec("PO4", "po", order_id="PO-2026-501", po_status=po_status,
+                     items=[("Rice 25kg", 40, 4250)], **po_extra))
+    dn = prepare(rec("DN4", "dn", po_ref="PO-2026-501", items=[("Rice 25kg", 40, 0)], **(dn_extra or {})))
+    return compute_order([po, dn], [link("DN4", "PO4", "po_dn")])
+
+
+def _po_updates(view):
+    return [u for u in view["updates"] if u["field"] == "po_status"]
+
+
+def test_pending_dn_does_not_fulfil_po():
+    # The bug: a DN listing every ordered item marked the PO fulfilled while
+    # the DN itself was still pending.
+    view = _po4_with_dn(dn_extra={"dn_status": "pending"})
+    assert view["delivery_stage"] == "none"
+    assert view["lines"][0]["delivered"] == 0
+    assert _po_updates(view) == []
+
+
+def test_dn_without_status_counts_as_not_delivered():
+    view = _po4_with_dn()
+    assert view["delivery_stage"] == "none"
+    assert _po_updates(view) == []
+
+
+def test_dn_marked_delivered_via_received_status_fulfils_po():
+    view = _po4_with_dn(dn_extra={"received_status": "delivered"})
+    assert view["delivery_stage"] == "full"
+    assert _po_updates(view) == [{"document_id": "PO4", "field": "po_status", "from": "approved", "to": "fulfilled"}]
+
+
+def test_partially_delivered_dn_gives_partial_not_full():
+    view = _po4_with_dn(dn_extra={"dn_status": "partially_delivered"})
+    assert view["delivery_stage"] == "partial"
+    assert _po_updates(view)[0]["to"] == "partially_delivered"
+
+
+def test_wrongly_fulfilled_po_goes_back_down():
+    # Approved PO (has an approver) -> back to approved.
+    view = _po4_with_dn(po_status="fulfilled", approved_by="Nimal", dn_extra={"dn_status": "pending"})
+    assert _po_updates(view) == [{"document_id": "PO4", "field": "po_status", "from": "fulfilled", "to": "approved"}]
+    # No approver -> back to pending.
+    view = _po4_with_dn(po_status="fulfilled", dn_extra={"dn_status": "pending"})
+    assert _po_updates(view)[0]["to"] == "pending"
+
+
+def test_terminal_po_status_is_never_changed():
+    for status in ("cancelled", "rejected"):
+        assert _po_updates(_po4_with_dn(po_status=status, dn_extra={"dn_status": "delivered"})) == []
+
+
 def test_partial_payment_by_receipt():
     docs, links = _po8_order()
     receipt = prepare(rec("R50", "receipt", total=100000, date="2026-10-20", flow="cash_outflow"))
