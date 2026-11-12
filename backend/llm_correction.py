@@ -129,46 +129,49 @@ def looks_like_transliterated_sinhala(original_text: str, corrected_text: str) -
 
     return False
 
+# Values the corrector must never see: numbers (amounts, quantities, phones,
+# dates) and reference ids. Every alternative needs a digit, so an all-caps
+# WORD such as "INVIOCE" or "TOTAL" stays visible and can still be corrected
+# (SymSpell leaves all-caps alone anyway; see _looks_like_proper_noun).
+_SENSITIVE_RE = re.compile(
+    r"""
+        \b\d[\d,./:-]*\b                           # 250.00, 1,250.50, 12/03/2025, 0112-456789
+      | \b(?:INV|PO|DN|REC|DOC|NEW)\S*\d\S*\b      # INV-0045, PO#10045, DOC12
+      | \b(?=[A-Z0-9\-_/]*\d)[A-Z0-9\-_/]{4,}\b    # capitals-and-digits codes: ABC1234, SKU-77
+    """,
+    re.VERBOSE,
+)
+
+
 def preserve_sensitive_tokens(text: str):
+    """Swap every number/id for a `__TOKEN_<n>__` placeholder.
+
+    Done in ONE regex pass: substituting token by token with str.replace let a
+    later token (e.g. the quantity "2") land inside an earlier placeholder
+    ("__TOKEN_2__"), so the restore lost the value it stood for (a date came
+    back as the literal "__TOKEN_2__").
+    """
     if not isinstance(text, str):
         return "", {}
 
-    pattern = r"""
-    (
-        \b\d[\d,./:-]*\b |
-        \b[A-Z]{2,}\d+\b |
-        \bDOC\d+\b |
-        \bNEW\S*\b |
-        \bINV\S*\b |
-        \bPO\S*\b |
-        \bDN\S*\b |
-        \bREC\S*\b |
-        \b[A-Z0-9\-_/]{4,}\b |
-        \b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b |
-        \b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b
-    )
-    """
-    matches = re.findall(pattern, text, flags=re.VERBOSE)
+    placeholders: dict = {}
 
-    placeholders = {}
-    masked = text
+    def _mask(match: re.Match) -> str:
+        placeholder = f"__TOKEN_{len(placeholders)}__"
+        placeholders[placeholder] = match.group(0)
+        return placeholder
 
-    for i, token in enumerate(matches):
-        placeholder = f"__TOKEN_{i}__"
-        placeholders[placeholder] = token
-        masked = masked.replace(token, placeholder, 1)
-
-    return masked, placeholders
+    return _SENSITIVE_RE.sub(_mask, text), placeholders
 
 
 def restore_sensitive_tokens(text: str, placeholders: dict):
+    """Put the original values back, in one pass (a restored value can never be
+    mistaken for a placeholder). Unknown placeholders are left as they are."""
     if not isinstance(text, str):
         return ""
-
-    for placeholder, original in placeholders.items():
-        text = text.replace(placeholder, original)
-
-    return text
+    if not placeholders:
+        return text
+    return _PLACEHOLDER_RE.sub(lambda m: placeholders.get(m.group(0), m.group(0)), text)
 
 def _sinhala_ratio(text: str) -> float:
     chars = [c for c in text if c.strip()]
@@ -183,8 +186,8 @@ _PLACEHOLDER_RE = re.compile(r"__TOKEN_\d+__")
 def has_correctable_text(masked_text: str) -> bool:
     """True if anything besides masked tokens, digits and punctuation is left.
 
-    When masking hides everything (e.g. an all-caps "LUNCH" becomes
-    "__TOKEN_0__"), the LLM gets only a placeholder and answers with a chat
+    When masking hides everything (e.g. "450.00 / 12/03/2025" becomes
+    "__TOKEN_0__ / __TOKEN_1__"), the LLM gets only placeholders and answers with a chat
     message ("I don't see any document text...") instead of corrected text.
     There is nothing to correct in that case, so callers skip the LLM.
     """
@@ -519,6 +522,14 @@ OCR text to correct:
     corrected = restore_sensitive_tokens(corrected, placeholders)
 
     if not corrected.strip():
+        return dictionary_fixed
+
+    # Digit lock for the LLM pass too: if the model dropped, duplicated or
+    # invented a placeholder (or typed a digit), the numbers no longer match
+    # the input -> keep the uncorrected text rather than a changed value.
+    if _PLACEHOLDER_RE.search(corrected) or (
+        extract_digit_sequences(dictionary_fixed) != extract_digit_sequences(corrected)
+    ):
         return dictionary_fixed
 
     if looks_like_bad_rewrite(dictionary_fixed, corrected):
